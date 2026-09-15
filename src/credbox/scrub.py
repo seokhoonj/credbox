@@ -30,6 +30,12 @@ __all__ = [
 ]
 
 REDACTION = "***"
+REDACTION_BYTES = REDACTION.encode("ascii")
+
+# Bounds _scrub_value's container recursion. A real exception arg never nests this deep; the cap
+# turns a pathologically deep -- or cyclic -- container into a redacted subtree rather than a
+# RecursionError that _scrub_node would swallow, leaving the node's secret unscrubbed (fail-open).
+_MAX_CONTAINER_DEPTH = 50
 
 # A single secret OR an iterable of them; a bare str/Secret is one secret, never iterated.
 SecretsArg: TypeAlias = "str | Secret | Iterable[str | Secret]"
@@ -180,23 +186,48 @@ def _replace_targets(text: str, targets: list[str]) -> str:
     return result
 
 
-def _scrub_value(value: object, targets: list[str]) -> object:
-    """Scrub ``str`` values anywhere inside ``value``, recursing through ``list``/``tuple``/
-    ``dict``/``set`` containers so a secret nested in a non-string exception arg (e.g.
-    ``ValueError([msg])``, whose ``str()`` renders the list verbatim) is redacted too. Any
-    other type is returned unchanged."""
+def _replace_targets_bytes(data: bytes, targets: list[str]) -> bytes:
+    """Redact each target's byte form in ``data``. A secret echoed as ``bytes`` in an exception arg
+    (``ValueError(b"key=SECRET")``) renders verbatim under ``str(err)``, so a ``bytes`` arg must be
+    scrubbed like a ``str`` one; a target that will not encode is skipped (its ``str`` form is still
+    redacted elsewhere)."""
+    result = data
+    for target in targets:
+        try:
+            needle = target.encode("utf-8", "surrogatepass")
+        except Exception:
+            continue   # an exotic target that will not encode: nothing to match in bytes
+        result = result.replace(needle, REDACTION_BYTES)
+    return result
+
+
+def _scrub_value(value: object, targets: list[str], depth: int = 0) -> object:
+    """Scrub ``str`` (and ``bytes``) values anywhere inside ``value``, recursing through ``list``/
+    ``tuple``/``dict``/``set`` containers so a secret nested in a non-string exception arg (e.g.
+    ``ValueError([msg])``, whose ``str()`` renders the list verbatim) is redacted too. Past
+    ``_MAX_CONTAINER_DEPTH`` levels -- an unrealistically deep, or cyclic, structure -- the whole
+    subtree collapses to ``***`` rather than recursing into a ``RecursionError`` that would leave
+    the arg unscrubbed (over-redaction is the safe direction for a leak guard). Any other type is
+    returned unchanged."""
     if isinstance(value, str):
         return _replace_targets(value, targets)
+    if isinstance(value, (bytes, bytearray)):
+        return _replace_targets_bytes(bytes(value), targets)
+    if depth >= _MAX_CONTAINER_DEPTH:
+        return REDACTION   # too deep/cyclic to recurse safely: redact rather than fail open
     if isinstance(value, tuple):
-        return tuple(_scrub_value(v, targets) for v in value)
+        return tuple(_scrub_value(v, targets, depth + 1) for v in value)
     if isinstance(value, list):
-        return [_scrub_value(v, targets) for v in value]
+        return [_scrub_value(v, targets, depth + 1) for v in value]
     if isinstance(value, dict):
-        return {_scrub_value(k, targets): _scrub_value(v, targets) for k, v in value.items()}
+        return {
+            _scrub_value(k, targets, depth + 1): _scrub_value(v, targets, depth + 1)
+            for k, v in value.items()
+        }
     if isinstance(value, frozenset):
-        return frozenset(_scrub_value(v, targets) for v in value)
+        return frozenset(_scrub_value(v, targets, depth + 1) for v in value)
     if isinstance(value, set):
-        return {_scrub_value(v, targets) for v in value}
+        return {_scrub_value(v, targets, depth + 1) for v in value}
     return value
 
 

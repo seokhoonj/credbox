@@ -29,6 +29,33 @@ def test_repr_is_masked_and_hides_the_secret() -> None:
     assert SECRET not in text
 
 
+def test_format_and_fstring_render_the_mask_not_the_secret() -> None:
+    # `f"{secret}"` and `format(secret)` route through object.__format__ (empty spec) -> __str__,
+    # so they must inherit the mask; a regression that added a value-revealing __format__ would
+    # leak into any log line that interpolates a Secret.
+    secret = Secret(SECRET)
+    assert SECRET not in f"{secret}"
+    assert SECRET not in format(secret)
+    assert format(secret) == mask_secret(SECRET)
+
+
+def test_format_with_a_nonempty_spec_does_not_reveal_the_secret() -> None:
+    # A format spec reaches str.__format__ only if __str__ already masked; object.__format__ with a
+    # non-empty spec raises TypeError rather than falling back to the raw value -- either way the
+    # secret must never appear.
+    try:
+        rendered = f"{Secret(SECRET):>40}"
+    except TypeError:
+        return   # object.__format__ rejects a spec it has no value to format -- no leak, acceptable
+    assert SECRET not in rendered
+
+
+def test_secret_in_exception_message_is_masked() -> None:
+    # Embedding a Secret in an exception (a common accidental-leak path) renders its mask, because
+    # str(secret) is the mask -- str(ValueError(secret)) must not carry the raw value.
+    assert SECRET not in str(ValueError(Secret(SECRET)))
+
+
 def test_mask_reveals_both_edges_for_a_long_value() -> None:
     assert mask_secret("abcdefghijklmnop", edge=4) == "abcd...mnop"
 

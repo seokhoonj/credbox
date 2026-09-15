@@ -24,7 +24,11 @@ class _Tty(io.StringIO):
 
 def test_set_then_masked_get(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["set", "myapp", "api_key", "--value", SECRET]) == 0
-    capsys.readouterr()
+    set_output = capsys.readouterr()
+    # `set` confirms on stdout ("stored ...") and must never echo the value it just stored -- the
+    # highest-risk command for an accidental secret-to-terminal regression.
+    assert SECRET not in set_output.out
+    assert SECRET not in set_output.err
     assert main(["get", "myapp", "api_key"]) == 0
     out = capsys.readouterr().out.strip()
     assert out == mask_secret(SECRET)   # exactly the mask, not merely "not the secret"
@@ -72,6 +76,23 @@ def test_unset_removes_the_key(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_invalid_app_name_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["get", "bad/app", "k"]) == 2
+    assert "error" in capsys.readouterr().err
+
+
+def test_get_keyring_validates_app_before_composing_the_service(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The store-only `get --keyring` path must validate `app` like the facade -- the keyring service
+    # is f"{app}/{namespace}", so an unvalidated "a/b" would collide with app "a" namespace "b".
+    # The file-backend path validates incidentally via config_dir; this pins the keyring path too.
+    assert main(["get", "--keyring", "bad/app", "k"]) == 2
+    assert "error" in capsys.readouterr().err
+
+
+def test_get_keyring_validates_namespace_before_composing_the_service(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["get", "--keyring", "-n", "bad/ns", "myapp", "k"]) == 2
     assert "error" in capsys.readouterr().err
 
 

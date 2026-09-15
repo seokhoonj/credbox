@@ -26,7 +26,14 @@ from credbox.backends import FileBackend, default_backend
 from credbox.backends._store import CREDENTIALS_FILE, ENCRYPTED_FILE
 from credbox.credentials import Credentials
 from credbox.errors import CredBoxError, InvalidAppNameError, MissingExtraError
-from credbox.paths import app_dir_segment, cache_dir, config_dir, data_dir, state_dir
+from credbox.paths import (
+    _valid_segment,
+    app_dir_segment,
+    cache_dir,
+    config_dir,
+    data_dir,
+    state_dir,
+)
 from credbox.permissions import (
     warn_if_group_or_world_accessible,
     warn_if_group_or_world_readable,
@@ -199,8 +206,14 @@ def _cmd_get(args: argparse.Namespace) -> int:
     if args.resolve:
         value = _credentials(args).secret(args.name)                       # override > env > store
     else:
-        value = default_backend(use_keyring=args.keyring).get(
-            args.app, args.name, namespace=args.namespace)                  # store only
+        # Store-only, but validate `app`/`namespace` exactly as the Credentials facade does before
+        # reaching a backend -- a backend trusts pre-validated segments (protocol.py), and the
+        # keyring backend composes its service as f"{app}/{namespace}", so an unvalidated "a/b"
+        # here would collide with another app's store. Every other subcommand goes through the
+        # facade via _credentials(); this store-only path must not be the one hole in that guard.
+        app = app_dir_segment(args.app)
+        namespace = _valid_segment(args.namespace, label="namespace") if args.namespace is not None else None
+        value = default_backend(use_keyring=args.keyring).get(app, args.name, namespace=namespace)
     if value is None:
         print(f"credbox: {args.name} is not set for {_target(args)}", file=sys.stderr)
         return 1
