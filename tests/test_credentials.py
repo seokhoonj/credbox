@@ -31,6 +31,16 @@ def test_env_beats_store(monkeypatch: pytest.MonkeyPatch) -> None:
     assert creds.secret("API_TOKEN").reveal() == "from_env"  # type: ignore[union-attr]
 
 
+def test_override_wins_over_env_and_store_together(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The top of the precedence chain: with all three tiers populated at once (override > env >
+    # store), the explicit override must win. Neither test_override_wins_over_store nor
+    # test_env_beats_store pins the override-vs-env edge -- only this three-way case does.
+    creds = Credentials("myapp")
+    creds.set("API_TOKEN", value="stored")
+    monkeypatch.setenv("API_TOKEN", "from_env")
+    assert creds.secret("API_TOKEN", override="explicit").reveal() == "explicit"  # type: ignore[union-attr]
+
+
 @pytest.mark.parametrize("blank_env", ["", "   ", "\t\n"])
 def test_blank_env_value_falls_through_to_the_store(
     monkeypatch: pytest.MonkeyPatch, blank_env: str

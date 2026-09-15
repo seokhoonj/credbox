@@ -159,6 +159,8 @@ class Credentials:
                 would list under ``names`` yet resolve to ``None``; a blank name is unresolvable --
                 both are refused to keep set and get consistent. A subclass of both ``CredBoxError``
                 and ``ValueError``.
+            TypeError: ``value`` is neither ``str`` nor ``Secret`` (a contract violation reachable
+                only from a dynamically-typed caller; the message names the type only, never the value).
             CredentialsError: the store could not be written.
             DecryptionError: with an encrypted backend, the existing store had to be read to
                 merge the new value and could not be decrypted (a wrong passphrase or tampering).
