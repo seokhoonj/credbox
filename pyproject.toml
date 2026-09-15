@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name            = "credbox"
-version         = "0.2.0"
+version         = "0.3.0"
 description     = "A leak-safe secret store for Python apps and CLIs: XDG paths by default or OS-native locations, a masking Secret type, atomic-0600 writes, and opt-in keyring/encrypted backends."
 readme          = "README.md"
 license         = "MIT"
