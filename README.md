@@ -105,27 +105,27 @@ A **namespace** goes the other way: it lets one app's store hold several compone
 separate sections of the *same* file, without their key names colliding. Treat one app as the
 container and give each component its own namespace inside it — the components need no app or file
 of their own.
-`Credentials(app, namespace="thinchat")` reads and writes only the `thinchat` section;
+`Credentials(app, namespace="chat")` reads and writes only the `chat` section;
 `namespace=None` (the default) is the original flat store, unchanged.
 
 **Several components, one file.** Put every component's key under its own namespace of one host
 app — from the CLI (`--namespace`, or `-n`) or from code:
 
 ```sh
-credbox set yourapp GEMINI_API_KEY -n thinchat   # prompts without echo
+credbox set yourapp GEMINI_API_KEY -n chat  # prompts without echo
 credbox set yourapp SMTP_PASSWORD  -n mailer
-credbox list yourapp -n thinchat                 # inspect one section
+credbox list yourapp -n chat                # inspect one section
 ```
 
 ```python
 from credbox import Credentials
-key = Credentials("yourapp", namespace="thinchat").require("GEMINI_API_KEY")   # read it back
+key = Credentials("yourapp", namespace="chat").require("GEMINI_API_KEY")   # read it back
 ```
 
 Everything lands in one file, `~/.config/yourapp/credentials.json`:
 
 ```json
-{ "thinchat": {"GEMINI_API_KEY": "…"}, "mailer": {"SMTP_PASSWORD": "…"} }
+{ "chat": {"GEMINI_API_KEY": "…"}, "mailer": {"SMTP_PASSWORD": "…"} }
 ```
 
 An app's credentials **file** is wholly flat or wholly namespaced: once it holds namespaces, a flat
@@ -142,8 +142,9 @@ it in between: read each flat key (`credbox get app K --reveal`), remove them al
 namespace (`credbox set app K -n ns`).
 
 Two caveats when several components share one store. The environment tier ignores the namespace, so
-two namespaces that both self-resolve a generic name (`API_KEY`) from `$API_KEY` get the *same*
-value — prefix the env names (`THINCHAT_API_KEY`) to keep them separate. And a consolidated store
+two components that both self-resolve the *same* generic name (`API_KEY`) from `$API_KEY` get the
+same value — give each a distinct env name (as in the example, `GEMINI_API_KEY` and `SMTP_PASSWORD`)
+so they stay separate. And a consolidated store
 written from **multiple machines** over a synced folder (Dropbox, NFS) can lose one namespace's
 update to a sync conflict, because the cross-process lock does not span machines — write a shared
 store from a single machine, or keep components in separate stores.
@@ -160,7 +161,7 @@ credbox get myapp API_KEY               # masked (API_...cdef); reads the stored
 credbox get myapp API_KEY --reveal      # print in full (the only raw-secret-to-stdout path)
 credbox get myapp API_KEY --resolve     # also consult the environment variable, not just the store
 credbox unset myapp API_KEY
-credbox set yourapp API_KEY -n thinchat # -n/--namespace: operate within one section of the store
+credbox set yourapp API_KEY -n chat     # -n/--namespace: operate within one section of the store
 credbox path myapp                      # print the credentials.json path
 credbox dirs myapp                      # print all five directories
 credbox doctor                          # check every app's credentials file/dir permissions

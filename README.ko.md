@@ -84,27 +84,27 @@ key.reveal()                              # -> "sk-..."  HTTP 클라이언트에
 
 **namespace(네임스페이스)**는 반대 방향입니다 — 한 앱의 저장소 안에서 여러 도구의 시크릿을 *같은* 파일의
 별도 구획에 키 이름 충돌 없이 담게 해줍니다. 한 앱을 컨테이너로 삼고 각 도구에 자기 namespace를 주면 됩니다
-— 도구마다 앱·파일을 따로 둘 필요가 없습니다. `Credentials(app, namespace="thinchat")`는 `thinchat` 구획만
+— 도구마다 앱·파일을 따로 둘 필요가 없습니다. `Credentials(app, namespace="chat")`는 `chat` 구획만
 읽고 씁니다. `namespace=None`(기본값)은 기존 flat 저장소 그대로입니다.
 
 **여러 도구, 한 파일.** 각 도구의 키를 호스트 앱 하나의 자기 namespace 아래 둡니다 — CLI(`--namespace`, 또는
 `-n`) 또는 코드로:
 
 ```sh
-credbox set yourapp GEMINI_API_KEY -n thinchat   # 화면 표시 없이 입력
+credbox set yourapp GEMINI_API_KEY -n chat  # 화면 표시 없이 입력
 credbox set yourapp SMTP_PASSWORD  -n mailer
-credbox list yourapp -n thinchat                 # 한 구획만 조회
+credbox list yourapp -n chat                # 한 구획만 조회
 ```
 
 ```python
 from credbox import Credentials
-key = Credentials("yourapp", namespace="thinchat").require("GEMINI_API_KEY")   # 다시 읽기
+key = Credentials("yourapp", namespace="chat").require("GEMINI_API_KEY")   # 다시 읽기
 ```
 
 전부 한 파일 `~/.config/yourapp/credentials.json`에 들어갑니다:
 
 ```json
-{ "thinchat": {"GEMINI_API_KEY": "…"}, "mailer": {"SMTP_PASSWORD": "…"} }
+{ "chat": {"GEMINI_API_KEY": "…"}, "mailer": {"SMTP_PASSWORD": "…"} }
 ```
 
 한 앱의 자격증명 **파일**은 flat이거나 namespaced 중 하나입니다 — namespace가 생기면 flat 접근(namespace
@@ -117,9 +117,9 @@ flat 저장소를 마이그레이션(아래)하세요. namespace는 공유·앱 
 각 flat 키를 읽고(`credbox get app K --reveal`), 전부 제거한 뒤(`credbox unset app K` — 마지막 키가 사라지면
 저장소는 빈 상태), 각각을 namespace 아래 다시 저장합니다(`credbox set app K -n ns`).
 
-여러 도구가 한 저장소를 공유할 때 주의 두 가지. 환경변수 단계는 namespace를 무시하므로, 두 namespace가 같은
-일반 이름(`API_KEY`)을 `$API_KEY`에서 각자 해석하면 *같은* 값을 받습니다 — env 이름에 접두어
-(`THINCHAT_API_KEY`)를 붙여 분리하세요. 그리고 통합 저장소를 **여러 머신**에서 동기화 폴더(Dropbox, NFS)를
+여러 도구가 한 저장소를 공유할 때 주의 두 가지. 환경변수 단계는 namespace를 무시하므로, 두 도구가 *같은*
+일반 이름(`API_KEY`)을 `$API_KEY`에서 각자 해석하면 *같은* 값을 받습니다 — 각자 다른 env 이름(예제의
+`GEMINI_API_KEY`·`SMTP_PASSWORD`처럼)을 주어 분리하세요. 그리고 통합 저장소를 **여러 머신**에서 동기화 폴더(Dropbox, NFS)를
 통해 쓰면, 크로스-프로세스 lock이 머신 간에는 미치지 않아 한 namespace의 갱신이 동기화 충돌로 유실될 수
 있습니다 — 공유 저장소는 한 머신에서만 쓰거나, 도구를 별도 저장소로 두세요.
 
@@ -135,7 +135,7 @@ credbox get myapp API_KEY               # 마스킹 출력 (API_...cdef); 저장
 credbox get myapp API_KEY --reveal      # 전체 출력 (실제 값이 화면에 나가는 유일한 경로)
 credbox get myapp API_KEY --resolve     # 환경변수까지 함께 참조
 credbox unset myapp API_KEY
-credbox set myapp API_KEY -n thinchat   # -n/--namespace: 저장소의 한 구획 안에서 동작
+credbox set myapp API_KEY -n chat       # -n/--namespace: 저장소의 한 구획 안에서 동작
 credbox path myapp                      # credentials.json 경로
 credbox dirs myapp                      # 디렉터리 다섯 개
 credbox doctor                          # 모든 앱의 권한 점검
