@@ -83,3 +83,36 @@ def test_scrub_exception_rejects_a_bytes_arg_without_rendering_the_in_flight_sec
         with pytest.raises(TypeError) as excinfo:
             scrub_exception(ValueError(f"leaking {SECRET}"), SECRET.encode())   # type: ignore[arg-type]
     assert excinfo.value.__suppress_context__ is True
+
+
+def test_scrub_exception_redacts_a_bytes_value_in_exception_args() -> None:
+    # A secret echoed as `bytes` in an exception arg (ValueError(b"key=SECRET")) renders verbatim
+    # under str(err), so it must be scrubbed like a str arg -- not passed through unchanged.
+    err = ValueError(f"key={SECRET}".encode())
+    scrub_exception(err, [SECRET])
+    assert SECRET.encode() not in err.args[0]
+    assert SECRET not in str(err.args)
+
+
+def test_scrub_exception_redacts_a_secret_nested_deeper_than_the_recursion_cap() -> None:
+    # Past _MAX_CONTAINER_DEPTH the subtree collapses to the redaction marker rather than a
+    # RecursionError that _scrub_node would swallow, leaving the arg unscrubbed (fail-open). A
+    # secret buried far deeper than the cap must not survive into str(err.args).
+    nested: object = SECRET
+    for _ in range(200):
+        nested = [nested]
+    err = ValueError(nested)
+    scrub_exception(err, [SECRET])
+    assert SECRET not in str(err.args)
+
+
+def test_scrub_exception_handles_a_cyclic_arg_without_failing_open() -> None:
+    # A self-referential container recurses forever in _scrub_value -> RecursionError, which
+    # _scrub_node swallows (never-raise) and historically left node.args -- and its secret --
+    # unscrubbed. The depth cap must redact instead: nothing raises and the secret does not survive.
+    cyclic: list[object] = [SECRET]
+    cyclic.append(cyclic)
+    err = ValueError(cyclic)
+    result = scrub_exception(err, [SECRET])   # must not raise
+    assert result is err
+    assert SECRET not in str(err.args)
