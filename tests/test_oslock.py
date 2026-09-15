@@ -1,5 +1,5 @@
 """The cross-platform exclusive file-lock primitive: it excludes a second holder, waits
-when told to block, and degrades to a no-op where the platform offers no lock."""
+when told to block, and reports UNSUPPORTED where the platform/filesystem offers no lock."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import os
 import pytest
 
 from credbox import _oslock
-from credbox._oslock import lock_exclusive, unlock
+from credbox._oslock import LockOutcome, lock_exclusive, unlock
 
 posix_only = pytest.mark.skipif(os.name != "posix", reason="advisory file locks")
 
@@ -19,10 +19,10 @@ def test_non_blocking_second_holder_refused(tmp_path):
     first = path.open("a+")
     second = path.open("a+")
     try:
-        assert lock_exclusive(first, blocking=False) is True
-        assert lock_exclusive(second, blocking=False) is False   # first still holds it
+        assert lock_exclusive(first, blocking=False) is LockOutcome.ACQUIRED
+        assert lock_exclusive(second, blocking=False) is LockOutcome.CONTENDED   # first still holds it
         unlock(first)
-        assert lock_exclusive(second, blocking=False) is True    # free now
+        assert lock_exclusive(second, blocking=False) is LockOutcome.ACQUIRED    # free now
         unlock(second)
     finally:
         first.close()
@@ -36,9 +36,9 @@ def test_blocking_acquires_when_free(tmp_path):
     first = path.open("a+")
     second = path.open("a+")
     try:
-        assert lock_exclusive(first, blocking=True) is True
+        assert lock_exclusive(first, blocking=True) is LockOutcome.ACQUIRED
         unlock(first)
-        assert lock_exclusive(second, blocking=True) is True
+        assert lock_exclusive(second, blocking=True) is LockOutcome.ACQUIRED
         unlock(second)
     finally:
         first.close()
@@ -121,15 +121,15 @@ def test_windows_blocking_retries_on_deadlock_timeout(monkeypatch, tmp_path):
     monkeypatch.setattr(_oslock, "msvcrt", FakeMsvcrt())
     handle = (tmp_path / "x.lock").open("a+")
     try:
-        assert lock_exclusive(handle, blocking=True) is True
+        assert lock_exclusive(handle, blocking=True) is LockOutcome.ACQUIRED
         assert calls["n"] == 3   # retried through both timeouts before acquiring
     finally:
         handle.close()
 
 
 def test_windows_blocking_gives_up_on_non_timeout_error(monkeypatch, tmp_path):
-    """A non-timeout error (e.g. EACCES) is real: do NOT retry, return False so blocking does
-    not silently spin on a permanent failure."""
+    """A non-timeout error (e.g. EACCES) is real: do NOT retry, report CONTENDED so blocking does
+    not silently spin on a permanent failure (EACCES is not an 'unsupported filesystem' errno)."""
     import errno
 
     class FakeMsvcrt:
@@ -144,20 +144,44 @@ def test_windows_blocking_gives_up_on_non_timeout_error(monkeypatch, tmp_path):
     monkeypatch.setattr(_oslock, "msvcrt", FakeMsvcrt())
     handle = (tmp_path / "x.lock").open("a+")
     try:
-        assert lock_exclusive(handle, blocking=True) is False
+        assert lock_exclusive(handle, blocking=True) is LockOutcome.CONTENDED
     finally:
         handle.close()
 
 
-def test_no_primitive_platform_is_a_no_op(monkeypatch, tmp_path):
-    """Where neither fcntl nor msvcrt exists, locking must not fail -- it succeeds as a no-op
-    so the caller's own in-process guard is the only serialization."""
+def test_no_primitive_platform_reports_unsupported(monkeypatch, tmp_path):
+    """Where neither fcntl nor msvcrt exists, lock_exclusive reports UNSUPPORTED (not ACQUIRED) so
+    a caller can fall open -- run without an OS guard, warning once -- rather than mistake the
+    missing lock for a held one."""
     monkeypatch.setattr(_oslock, "fcntl", None)
     monkeypatch.setattr(_oslock, "msvcrt", None)
     handle = (tmp_path / "x.lock").open("a+")
     try:
-        assert lock_exclusive(handle, blocking=False) is True
-        assert lock_exclusive(handle, blocking=True) is True
+        assert lock_exclusive(handle, blocking=False) is LockOutcome.UNSUPPORTED
+        assert lock_exclusive(handle, blocking=True) is LockOutcome.UNSUPPORTED
         unlock(handle)   # no-op, must not raise
+    finally:
+        handle.close()
+
+
+def test_enolck_filesystem_reports_unsupported(monkeypatch, tmp_path):
+    """The core fix: a filesystem that cannot lock (POSIX flock -> ENOLCK, as on some NFS mounts)
+    must report UNSUPPORTED, distinct from CONTENDED, so a single-instance guard does not misread
+    it as 'held' and refuse to run forever."""
+    import errno as _errno
+
+    class FakeFcntl:
+        LOCK_EX = 2
+        LOCK_NB = 4
+        LOCK_UN = 8
+
+        def flock(self, handle, flags):
+            raise OSError(_errno.ENOLCK, "no locks available")
+
+    monkeypatch.setattr(_oslock, "fcntl", FakeFcntl())
+    handle = (tmp_path / "x.lock").open("a+")
+    try:
+        assert lock_exclusive(handle, blocking=False) is LockOutcome.UNSUPPORTED
+        assert lock_exclusive(handle, blocking=True) is LockOutcome.UNSUPPORTED
     finally:
         handle.close()
