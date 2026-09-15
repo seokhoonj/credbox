@@ -1,7 +1,7 @@
 """Reading non-secret JSON state from disk, corruption-aware.
 
 This is for NON-secret state only -- watermarks, cursors, small config. The secret store uses
-``_storecodec`` (the leak-safe returning-frame codec), never this module: a malformed secret
+``_store_codec`` (the leak-safe returning-frame codec), never this module: a malformed secret
 file must produce a content-free fault, whereas here a malformed *state* file is simply
 treated as absent. A missing file or invalid JSON returns ``None``; a genuine ``OSError``
 (permission denied, an I/O error) propagates so a real problem is not silently swallowed.

@@ -125,7 +125,13 @@ def scrub_exception(err: BaseException, secrets: SecretsArg) -> BaseException:
             # PEP 654: a group's members live in `.exceptions`, not on the cause/context chain.
             # httpx/anyio raise these routinely, and each member's args/URLs are exactly what this
             # module exists to scrub -- so walk them too (the `seen` set guards against cycles).
-            stack.extend(node.exceptions)
+            try:
+                members = node.exceptions
+            except MemoryError:
+                raise   # never swallow OOM into skipping a group's members that still hold a secret
+            except Exception:
+                members = ()   # a custom group's .exceptions accessor may raise; never on the error path
+            stack.extend(members)
     return err
 
 
@@ -173,6 +179,9 @@ def _redaction_targets(secret_values: list[str]) -> list[str]:
             for encoded in (quote(value), quote_plus(value)):
                 targets.add(encoded)
                 targets.add(_percent_hex_lowercased(encoded))
+        except MemoryError:
+            raise   # never swallow OOM into skipping the encoded forms: the URL-encoded secret
+                    # would then survive verbatim -- the exact leak this expansion exists to close
         except Exception:
             pass   # an exotic value that will not URL-encode: the raw form is still redacted
     return sorted(targets, key=len, reverse=True)
@@ -195,40 +204,56 @@ def _replace_targets_bytes(data: bytes, targets: list[str]) -> bytes:
     for target in targets:
         try:
             needle = target.encode("utf-8", "surrogatepass")
+        except MemoryError:
+            raise   # never swallow OOM into skipping a target -- that could return the secret's
+                    # bytes unredacted, the leak the module's MemoryError carve-out exists to prevent
         except Exception:
             continue   # an exotic target that will not encode: nothing to match in bytes
         result = result.replace(needle, REDACTION_BYTES)
     return result
 
 
-def _scrub_value(value: object, targets: list[str], depth: int = 0) -> object:
+def _scrub_value(
+    value: object, targets: list[str], depth: int = 0, seen: set[int] | None = None
+) -> object:
     """Scrub ``str`` (and ``bytes``) values anywhere inside ``value``, recursing through ``list``/
     ``tuple``/``dict``/``set`` containers so a secret nested in a non-string exception arg (e.g.
-    ``ValueError([msg])``, whose ``str()`` renders the list verbatim) is redacted too. Past
-    ``_MAX_CONTAINER_DEPTH`` levels -- an unrealistically deep, or cyclic, structure -- the whole
-    subtree collapses to ``***`` rather than recursing into a ``RecursionError`` that would leave
-    the arg unscrubbed (over-redaction is the safe direction for a leak guard). Any other type is
-    returned unchanged."""
+    ``ValueError([msg])``, whose ``str()`` renders the list verbatim) is redacted too.
+
+    Two guards keep a hostile or accidental arg-shape from turning this into a hang or a leak:
+    ``seen`` (container ids visited in THIS arg's walk) collapses a cycle or a re-shared subgraph
+    to ``***`` on the second visit -- without it a container holding two references to itself
+    (``a = [a, a]``) fans out ``2**depth`` times before any depth limit bites. ``_MAX_CONTAINER_DEPTH``
+    then bounds a genuinely deep but acyclic chain of distinct containers, whose ids never repeat.
+    Either bound over-redacts (collapses a subtree to ``***``) rather than failing open or recursing
+    into a ``RecursionError`` that ``_scrub_node`` would swallow, leaving the arg unscrubbed. Any
+    non-container, non-str/bytes value is returned unchanged."""
     if isinstance(value, str):
         return _replace_targets(value, targets)
     if isinstance(value, (bytes, bytearray)):
         return _replace_targets_bytes(bytes(value), targets)
+    if not isinstance(value, (tuple, list, dict, set, frozenset)):
+        return value
     if depth >= _MAX_CONTAINER_DEPTH:
-        return REDACTION   # too deep/cyclic to recurse safely: redact rather than fail open
+        return REDACTION   # too deep to recurse safely: redact rather than risk a RecursionError
+    if seen is None:
+        seen = set()
+    marker = id(value)
+    if marker in seen:
+        return REDACTION   # a cycle or a re-shared container: over-redact rather than re-expand it
+    seen.add(marker)       # never removed within this walk: bounds total work to O(distinct nodes)
     if isinstance(value, tuple):
-        return tuple(_scrub_value(v, targets, depth + 1) for v in value)
+        return tuple(_scrub_value(v, targets, depth + 1, seen) for v in value)
     if isinstance(value, list):
-        return [_scrub_value(v, targets, depth + 1) for v in value]
+        return [_scrub_value(v, targets, depth + 1, seen) for v in value]
     if isinstance(value, dict):
         return {
-            _scrub_value(k, targets, depth + 1): _scrub_value(v, targets, depth + 1)
+            _scrub_value(k, targets, depth + 1, seen): _scrub_value(v, targets, depth + 1, seen)
             for k, v in value.items()
         }
     if isinstance(value, frozenset):
-        return frozenset(_scrub_value(v, targets, depth + 1) for v in value)
-    if isinstance(value, set):
-        return {_scrub_value(v, targets, depth + 1) for v in value}
-    return value
+        return frozenset(_scrub_value(v, targets, depth + 1, seen) for v in value)
+    return {_scrub_value(v, targets, depth + 1, seen) for v in value}   # set
 
 
 def _scrub_node(node: BaseException, targets: list[str]) -> None:

@@ -46,6 +46,40 @@ def test_unset_and_names() -> None:
     backend.unset("myapp", "a")   # idempotent
 
 
+def test_encrypt_does_not_retain_the_passphrase_in_a_frame_on_a_late_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `del passphrase` after key derivation keeps it off the json.dumps / AESGCM.encrypt frame, so a
+    # fault there cannot expose it to a frame-locals-dumping handler (rich/sentry/pytest --showlocals).
+    # Without the del, _encrypt's frame would still bind `passphrase` when encrypt() raises.
+    from credbox.backends import encrypted
+
+    raw = PASSPHRASE.reveal()
+
+    class _BoomAESGCM:
+        def __init__(self, key: bytes) -> None:
+            pass
+
+        def encrypt(self, nonce: bytes, data: bytes, aad: bytes) -> bytes:
+            raise RuntimeError("boom during encrypt")
+
+    monkeypatch.setattr(encrypted, "AESGCM", _BoomAESGCM)
+    with pytest.raises(RuntimeError) as excinfo:
+        _backend().set("myapp", "api_key", value=SECRET)
+    leaked = []
+    tb = excinfo.value.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        # Only credbox's own frames matter -- this test frame legitimately holds `raw` for the
+        # comparison. Snapshot f_locals with list() (a 3.13+ live proxy raises if iterated directly).
+        if frame.f_globals.get("__name__", "").startswith("credbox"):
+            for name, val in list(frame.f_locals.items()):
+                if isinstance(val, str) and raw in val:
+                    leaked.append((frame.f_code.co_name, name))
+        tb = tb.tb_next
+    assert leaked == [], f"passphrase retained in a credbox frame local: {leaked}"
+
+
 def test_wrong_passphrase_fails_closed_content_free() -> None:
     _backend(Secret("right-passphrase")).set("myapp", "api_key", value=SECRET)
     with pytest.raises(DecryptionError) as excinfo:
