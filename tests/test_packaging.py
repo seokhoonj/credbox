@@ -22,7 +22,7 @@ def test_py_typed_marker_is_present() -> None:
 def test_console_scripts_are_declared() -> None:
     scripts = {ep.name: ep.value for ep in metadata.entry_points(group="console_scripts")}
     assert scripts.get("credbox") == "credbox.cli:main"
-    assert scripts.get("git-credential-credbox") == "credbox.gitcredential:main"
+    assert scripts.get("git-credential-credbox") == "credbox.git_credential:main"
 
 
 def test_optional_extras_are_declared() -> None:

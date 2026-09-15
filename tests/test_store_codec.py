@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from credbox._storecodec import StoreFault, StoreFaultKind, parse_store, serialize_store
+from credbox._store_codec import StoreFault, StoreFaultKind, parse_store, serialize_store
 
 SECRET = "sk_live_TOPSECRET_value"
 

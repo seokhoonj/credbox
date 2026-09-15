@@ -323,7 +323,7 @@ def test_malformed_decrypted_store_leaves_no_plaintext_on_the_traceback(
     # CredentialsError. Its traceback must not retain the decrypted plaintext in a frame local
     # (the `del outcome` guard) -- otherwise a stored/logged exception keeps every secret alive.
     import credbox.backends.encrypted as enc
-    from credbox._storecodec import StoreFault, StoreFaultKind
+    from credbox._store_codec import StoreFault, StoreFaultKind
     from credbox.errors import CredentialsError
 
     _backend().set("myapp", "api_key", value=SECRET)

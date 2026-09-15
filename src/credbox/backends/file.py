@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from credbox._storecodec import (
+from credbox._store_codec import (
     StoreFault,
     StoreFaultKind,
     layout_mismatch_hint,
@@ -132,7 +132,7 @@ class FileBackend:
 
     def _load_flat(self, app: str) -> dict[str, str]:
         """Parse ``credentials.json`` as a flat ``name -> secret`` map, or ``{}`` when absent. A
-        malformed file becomes a content-free ``CredentialsError`` via ``_storecodec`` -- the raw
+        malformed file becomes a content-free ``CredentialsError`` via ``_store_codec`` -- the raw
         bytes die in ``parse_store``'s returning frame and are not bound at this raise site."""
         store_bytes = self._read(app)
         if store_bytes is None:
@@ -162,7 +162,7 @@ class FileBackend:
 
         The plaintext map is a live frame-local here (the caller handed it to us to store); the
         *raised* ``CredentialsError`` carries only the path/errno, never a value -- the object-
-        level guarantee, not a claim that no plaintext exists in the frame (see _storecodec)."""
+        level guarantee, not a claim that no plaintext exists in the frame (see _store_codec)."""
         path = self.path(app)
         encoded = serialize_store(store)
         if isinstance(encoded, StoreFault):

@@ -16,7 +16,7 @@ import types
 
 import pytest
 
-from credbox._storecodec import StoreFault, StoreFaultKind, parse_store, serialize_store
+from credbox._store_codec import StoreFault, StoreFaultKind, parse_store, serialize_store
 from credbox.backends.encrypted import EncryptedFileBackend
 from credbox.backends.file import FileBackend
 from credbox.backends.keyring import KeyringBackend

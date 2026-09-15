@@ -84,7 +84,7 @@ class Credentials:
         # Passed to every backend call. Empty when namespace is None, so a flat resolution makes the
         # exact pre-0.2.0 call (no namespace kwarg) -- a custom SecretBackend written against the
         # original four-method protocol keeps working unchanged; only a namespaced call passes it.
-        self._ns_kwargs: dict[str, str] = {} if self._namespace is None else {"namespace": self._namespace}
+        self._namespace_kwargs: dict[str, str] = {} if self._namespace is None else {"namespace": self._namespace}
 
     def __repr__(self) -> str:
         # Secret-safe: the app, the namespace, the shared-store order, and the backend type only --
@@ -118,10 +118,10 @@ class Credentials:
         if from_env is not None:
             return Secret(from_env)
         for shared_app_name in self._shared:
-            value = self._backend.get(shared_app_name, name, **self._ns_kwargs)
+            value = self._backend.get(shared_app_name, name, **self._namespace_kwargs)
             if value is not None:
                 return value
-        return self._backend.get(self._app, name, **self._ns_kwargs)
+        return self._backend.get(self._app, name, **self._namespace_kwargs)
 
     def require(self, name: str, *, override: str | Secret | None = None) -> Secret:
         """Like ``secret`` but raise when the secret is unset everywhere -- for a key the caller
@@ -175,7 +175,7 @@ class Credentials:
         raw = raw.strip()
         if not raw:
             raise BlankSecretError(f"refusing to store a blank value for {name!r}")
-        self._backend.set(self._app, name, value=raw, **self._ns_kwargs)
+        self._backend.set(self._app, name, value=raw, **self._namespace_kwargs)
 
     def unset(self, name: str) -> None:
         """Remove ``name`` from this app's own store; a no-op when absent.
@@ -185,7 +185,7 @@ class Credentials:
             DecryptionError: with an encrypted backend, the existing store had to be read to
                 remove the name and could not be decrypted (a wrong passphrase or tampering).
         """
-        self._backend.unset(self._app, name, **self._ns_kwargs)
+        self._backend.unset(self._app, name, **self._namespace_kwargs)
 
     def names(self) -> list[str]:
         """The secret names stored in this app's own store, sorted -- never the values. With a
@@ -197,4 +197,4 @@ class Credentials:
             DecryptionError: with an encrypted backend, the store could not be decrypted (catch
                 ``CredBoxError`` to cover both, or ``DecryptionError`` to single it out).
         """
-        return self._backend.names(self._app, **self._ns_kwargs)
+        return self._backend.names(self._app, **self._namespace_kwargs)
