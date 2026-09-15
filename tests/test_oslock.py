@@ -164,12 +164,13 @@ def test_no_primitive_platform_reports_unsupported(monkeypatch, tmp_path):
         handle.close()
 
 
-@pytest.mark.parametrize("code", ["ENOLCK", "EOPNOTSUPP", "ENOSYS"])
+@pytest.mark.parametrize("code", ["ENOLCK", "EOPNOTSUPP", "ENOTSUP", "ENOSYS"])
 def test_unsupported_filesystem_errnos_report_unsupported(monkeypatch, tmp_path, code):
-    """The core fix: a filesystem that cannot lock (POSIX flock -> ENOLCK/EOPNOTSUPP/ENOSYS, as on
-    some NFS mounts or an exotic build) must report UNSUPPORTED, distinct from CONTENDED, so a
-    single-instance guard does not misread it as 'held' and refuse to run forever. Covers the
-    distinct members of _UNSUPPORTED_ERRNOS (on Linux ENOTSUP is an alias of EOPNOTSUPP)."""
+    """The core fix: a filesystem that cannot lock (POSIX flock -> ENOLCK/EOPNOTSUPP/ENOTSUP/ENOSYS,
+    as on some NFS mounts or an exotic build) must report UNSUPPORTED, distinct from CONTENDED, so a
+    single-instance guard does not misread it as 'held' and refuse to run forever. Every member of
+    _UNSUPPORTED_ERRNOS is exercised; on Linux ENOTSUP == EOPNOTSUPP (a harmless duplicate here),
+    but off-Linux (macOS/BSD) ENOTSUP is a distinct value, so listing it gives real coverage there."""
     import errno as _errno
 
     errnum = getattr(_errno, code)

@@ -78,7 +78,10 @@ class FileLock:
         return self._lock_unavailable
 
     def __repr__(self) -> str:
-        return f"FileLock(app={self._app!r}, name={self._name!r}, acquired={self.acquired})"
+        return (
+            f"FileLock(app={self._app!r}, name={self._name!r}, acquired={self.acquired}, "
+            f"lock_unavailable={self._lock_unavailable})"   # a fell-open hold must not repr as a real one
+        )
 
     def acquire(self) -> bool:
         """Try to take the lock without blocking. Returns ``True`` if taken; ``False`` ONLY when
@@ -140,6 +143,7 @@ class FileLock:
         (derived from it) never reports "held" over a handle that is already being released."""
         handle = self._handle
         self._handle = None
+        self._lock_unavailable = False   # the hold is over: not "held without a real OS lock" anymore
         if handle is not None:
             try:
                 unlock(handle)
