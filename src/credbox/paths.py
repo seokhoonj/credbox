@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import Literal
 
 from credbox.environment import env_var_prefix, read_absolute_path_override
 from credbox.errors import CredBoxError, InvalidAppNameError
@@ -52,6 +53,11 @@ _APP_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
 # -- a store must be portable, and a name that breaks only on Windows is a latent, hard-to-diagnose
 # footgun. Matched case-insensitively, with or without an extension.
 _WINDOWS_RESERVED = re.compile(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?")
+
+# The four directory kinds, as a closed vocabulary: the private resolvers thread one of exactly
+# these through, and every public entry point passes a literal -- so mypy rejects a typo'd kind
+# rather than letting it reach a runtime KeyError on `_XDG` / `_OVERRIDE_SUFFIX`.
+_DirKind = Literal["config", "data", "state", "cache"]
 
 # Each kind's XDG variable and home-relative default.
 _XDG = {
@@ -149,7 +155,7 @@ def cache_dir(app: str, *, layout: Layout | None = None) -> Path:
 
 # --- private resolvers ---------------------------------------------------------
 
-def _app_dir(kind: str, app: str, layout: Layout | None) -> Path:
+def _app_dir(kind: _DirKind, app: str, layout: Layout | None) -> Path:
     """Resolve ``kind`` for ``app`` under the given (or default) layout. A per-app
     absolute-path override, when set, wins before either layout is consulted."""
     segment = app_dir_segment(app)
@@ -167,7 +173,7 @@ def _app_dir(kind: str, app: str, layout: Layout | None) -> Path:
     return _xdg_app_dir(kind, segment)
 
 
-def _native_app_dir(kind: str, segment: str) -> Path | None:
+def _native_app_dir(kind: _DirKind, segment: str) -> Path | None:
     """The macOS/Windows native location for ``kind``, or ``None`` where native == xdg
     (Linux/other), or when ``%LOCALAPPDATA%`` is unset on Windows (fall back to xdg)."""
     if sys.platform == "darwin":
@@ -185,7 +191,7 @@ def _native_app_dir(kind: str, segment: str) -> Path | None:
     return None
 
 
-def _xdg_app_dir(kind: str, segment: str) -> Path:
+def _xdg_app_dir(kind: _DirKind, segment: str) -> Path:
     """``$<XDG var>/<segment>`` when the variable is an absolute path, else
     ``~/<home-relative default>/<segment>`` (the XDG spec's own fallback)."""
     env_name, home_subpath = _XDG[kind]
@@ -195,7 +201,7 @@ def _xdg_app_dir(kind: str, segment: str) -> Path:
     return _home_dir(kind, segment) / home_subpath / segment
 
 
-def _home_dir(kind: str, segment: str) -> Path:
+def _home_dir(kind: _DirKind, segment: str) -> Path:
     """``Path.home()`` as a ``CredBoxError`` rather than the ``RuntimeError`` it raises when no
     home can be determined -- so the failure stays inside credbox's error surface. A non-absolute
     ``HOME`` (whitespace or a relative path) is rejected too: it would resolve the store against the

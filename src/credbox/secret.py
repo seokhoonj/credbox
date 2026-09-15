@@ -48,6 +48,12 @@ class Secret:
     __slots__ = ("_value",)
 
     def __init__(self, value: str) -> None:
+        """Wrap a raw ``str`` credential.
+
+        Raises:
+            TypeError: ``value`` is not a ``str`` (e.g. ``bytes``); the message names the type
+                only, never the value, so the rejection cannot itself leak a mistyped secret.
+        """
         if not isinstance(value, str):
             raise TypeError(f"Secret value must be str, not {type(value).__name__}")
         self._value = value

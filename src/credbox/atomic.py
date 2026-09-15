@@ -100,7 +100,10 @@ def write_text_atomic(path: Path, text: str, *, mode: int = 0o600) -> None:
     Raises:
         UnicodeEncodeError: ``text`` is not encodable as UTF-8 (e.g. a lone surrogate). Raised
             before any filesystem operation -- a non-encodable ``text`` is a caller error, not
-            a write failure, so it is not wrapped and ``path`` is left untouched.
+            a write failure, so it is not wrapped and ``path`` is left untouched. NOTE: this
+            exception's ``.object`` is the full ``text``; do NOT route a secret value through
+            this helper -- the secret store writes ciphertext/JSON bytes via ``write_bytes_atomic``
+            (which cannot raise this), keeping the raw value off any traceback.
         CredBoxError: the write could not be completed durably (propagated from
             ``write_bytes_atomic`` -- see its ``Raises`` for the atomic-vs-durable
             distinction on the target's state).

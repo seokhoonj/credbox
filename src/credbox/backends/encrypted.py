@@ -339,6 +339,8 @@ def _encrypt(
     )
     if not isinstance(key, bytes):
         return key   # KDF_UNAVAILABLE -- propagate the signal; do not build a header round a missing key
+    del passphrase   # unused past key derivation: keep it off the json.dumps / AESGCM.encrypt frame,
+                     # so a fault there leaves only plaintext in frame (the documented residual)
     header = {
         "v": 1,
         "kdf": "argon2id",
