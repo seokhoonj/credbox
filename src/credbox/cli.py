@@ -3,7 +3,9 @@
 ``credbox set <app> <name>`` writes the same ``credentials.json`` (mode 0600) every consumer
 reads; the value is prompted for without echo when omitted, so it never lands in shell history.
 ``get`` masks by default (``--reveal`` prints it in full), ``list`` shows names only, and
-``doctor`` reports files readable beyond their owner.
+``doctor`` reports files readable beyond their owner. ``set``/``get``/``list``/``unset`` take
+``--namespace/-n`` (or the ``CREDBOX_NAMESPACE`` env var) to operate within one section of a
+namespaced store, so several components can share one app's store.
 
 Leak-surface discipline (the only raw secret ever written to stdout is a ``get --reveal``):
 everything else -- stderr, the ``set`` prompt, a masked ``get``, every error -- is content-free,
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -85,6 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="the secret value; omit to be prompted without echo. Passing it here exposes the "
         "secret in the process argument list (/proc, shell history) -- prefer the prompt",
     )
+    _add_namespace_flag(p_set)
     _add_keyring_flag(p_set)
     p_set.set_defaults(run=_cmd_set)
 
@@ -97,17 +101,20 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also consult the environment variable, not just the stored value",
     )
+    _add_namespace_flag(p_get)
     _add_keyring_flag(p_get)
     p_get.set_defaults(run=_cmd_get)
 
     p_list = sub.add_parser("list", help="list stored secret names (never values)")
     p_list.add_argument("app")
+    _add_namespace_flag(p_list)
     _add_keyring_flag(p_list)
     p_list.set_defaults(run=_cmd_list)
 
     p_unset = sub.add_parser("unset", help="remove a stored secret")
     p_unset.add_argument("app")
     p_unset.add_argument("name")
+    _add_namespace_flag(p_unset)
     _add_keyring_flag(p_unset)
     p_unset.set_defaults(run=_cmd_unset)
 
@@ -119,7 +126,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dirs.add_argument("app")
     p_dirs.set_defaults(run=_cmd_dirs)
 
-    p_doctor = sub.add_parser("doctor", help="check credentials file permissions")
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="check credentials file permissions (exit 1 if any file/dir is readable beyond its owner)",
+    )
     p_doctor.add_argument("app", nargs="*", help="apps to check; default: all under the config dir")
     p_doctor.set_defaults(run=_cmd_doctor)
 
@@ -135,8 +145,27 @@ def _add_keyring_flag(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_namespace_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--namespace",
+        "-n",
+        default=os.environ.get("CREDBOX_NAMESPACE") or None,
+        help="operate within a namespace -- a named section of the app's store, so several "
+        "components can share one store without their key names colliding. Defaults to the "
+        "CREDBOX_NAMESPACE environment variable; omit both for the flat store.",
+    )
+
+
+def _target(args: argparse.Namespace) -> str:
+    """The app, or ``app/namespace`` when a namespace is in play -- for the success/absent
+    messages, so a namespaced operation reads unambiguously."""
+    return args.app if args.namespace is None else f"{args.app}/{args.namespace}"
+
+
 def _credentials(args: argparse.Namespace) -> Credentials:
-    return Credentials(args.app, backend=default_backend(use_keyring=args.keyring))
+    return Credentials(
+        args.app, namespace=args.namespace, backend=default_backend(use_keyring=args.keyring)
+    )
 
 
 def _cmd_set(args: argparse.Namespace) -> int:
@@ -162,7 +191,7 @@ def _cmd_set(args: argparse.Namespace) -> int:
         print("credbox: error: empty value; nothing stored", file=sys.stderr)
         return 1
     _credentials(args).set(args.name, value=value)
-    print(f"stored {args.name} for {args.app}")
+    print(f"stored {args.name} for {_target(args)}")
     return 0
 
 
@@ -170,9 +199,10 @@ def _cmd_get(args: argparse.Namespace) -> int:
     if args.resolve:
         value = _credentials(args).secret(args.name)                       # override > env > store
     else:
-        value = default_backend(use_keyring=args.keyring).get(args.app, args.name)   # store only
+        value = default_backend(use_keyring=args.keyring).get(
+            args.app, args.name, namespace=args.namespace)                  # store only
     if value is None:
-        print(f"credbox: {args.name} is not set for {args.app}", file=sys.stderr)
+        print(f"credbox: {args.name} is not set for {_target(args)}", file=sys.stderr)
         return 1
     # The ONLY raw-secret-to-stdout path is --reveal; otherwise print the mask.
     print(value.reveal() if args.reveal else mask_secret(value.reveal()))
@@ -187,7 +217,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 def _cmd_unset(args: argparse.Namespace) -> int:
     _credentials(args).unset(args.name)
-    print(f"removed {args.name} from {args.app}")
+    print(f"removed {args.name} from {_target(args)}")
     return 0
 
 

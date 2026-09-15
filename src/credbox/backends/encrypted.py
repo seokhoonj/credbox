@@ -11,6 +11,13 @@ The header carries all KDF params and is bound as the AES-GCM associated data (A
 version cannot be downgraded unauthenticated. The key is re-derived from the header's own params
 on read (after clamping them, so a tampered header cannot force a huge Argon2id allocation before
 the tag check can reject it). A fresh nonce is drawn per encryption and never reused with a key.
+
+Threat model: the store is tamper-EVIDENT against in-place header/ciphertext edits and against a
+blob relocated from another store (the ``app`` is AAD-bound and re-checked). It is NOT protected
+against ROLLBACK -- an actor with write access can replace the file with an earlier valid snapshot
+encrypted under the same passphrase (e.g. reverting a rotated credential); detecting that needs
+external monotonic state and is out of scope here. Key and passphrase bytes cannot be zeroized in
+CPython (immutable ``str``, non-wiped ``bytes``); their lifetime is minimized, not erased.
 """
 
 from __future__ import annotations
@@ -27,7 +34,7 @@ from cryptography.exceptions import InternalError, InvalidTag, UnsupportedAlgori
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
-from credbox._storecodec import StoreFault, parse_store, serialize_store
+from credbox._storecodec import StoreFault, layout_mismatch_hint, parse_store, serialize_store
 from credbox.atomic import write_bytes_atomic
 from credbox.backends._store import ENCRYPTED_FILE, exclusive_store_lock, normalize_secret_value
 from credbox.errors import CredBoxError, CredentialsError, DecryptionError
@@ -66,20 +73,27 @@ class EncryptedFileBackend:
         """The encrypted store file for ``app``: ``credentials.enc`` in ``config_dir(app)``."""
         return config_dir(app) / ENCRYPTED_FILE
 
-    def get(self, app: str, name: str) -> Secret | None:
-        """Return the value stored under ``name`` as a ``Secret``, or ``None`` when absent.
+    def get(self, app: str, name: str, *, namespace: str | None = None) -> Secret | None:
+        """Return the value stored under ``name`` (within ``namespace`` when given) as a ``Secret``,
+        or ``None`` when absent.
 
         Raises:
             DecryptionError: the store exists but could not be decrypted (wrong passphrase or
                 tampering) -- content-free, ``__cause__`` and ``__context__`` both ``None``.
             CredentialsError: the store is unreadable, or decrypts to a malformed map.
         """
-        cleaned = normalize_secret_value(self._load(app).get(name))
+        if namespace is None:
+            by_name = self._load_flat(app)
+        else:
+            by_name = self._load_nested(app).get(namespace, {})
+        cleaned = normalize_secret_value(by_name.get(name))
         return Secret(cleaned) if cleaned is not None else None
 
-    def set(self, app: str, name: str, *, value: str | Secret) -> None:
-        """Store ``value`` under ``name``, re-encrypting the whole store with a fresh nonce under
-        the same cross-process lock as the file backend.
+    def set(self, app: str, name: str, *, value: str | Secret,
+            namespace: str | None = None) -> None:
+        """Store ``value`` under ``name`` (within ``namespace`` when given), re-encrypting the whole
+        store with a fresh nonce under the same cross-process lock as the file backend. Other
+        namespaces are preserved.
 
         Raises:
             DecryptionError: the existing store could not be decrypted.
@@ -87,39 +101,65 @@ class EncryptedFileBackend:
         """
         raw = value.reveal() if isinstance(value, Secret) else value
         with exclusive_store_lock(self.path(app)):
-            secret_value_by_name = self._load(app)
-            secret_value_by_name[name] = raw
-            self._save(app, secret_value_by_name)
+            if namespace is None:
+                flat = self._load_flat(app)
+                flat[name] = raw
+                self._save(app, flat)
+            else:
+                nested = self._load_nested(app)
+                nested.setdefault(namespace, {})[name] = raw
+                self._save(app, nested)
 
-    def unset(self, app: str, name: str) -> None:
-        """Remove ``name`` if present; an idempotent no-op when absent. Re-encrypts under the
-        same lock as ``set``.
+    def unset(self, app: str, name: str, *, namespace: str | None = None) -> None:
+        """Remove ``name`` (within ``namespace`` when given) if present; an idempotent no-op when
+        absent. Re-encrypts under the same lock as ``set``, preserving other namespaces.
 
         Raises:
             DecryptionError: the existing store could not be decrypted.
             CredentialsError: the store is unreadable, or the write failed.
         """
         with exclusive_store_lock(self.path(app)):
-            secret_value_by_name = self._load(app)
-            if name in secret_value_by_name:
-                del secret_value_by_name[name]
-                self._save(app, secret_value_by_name)
+            if namespace is None:
+                flat = self._load_flat(app)
+                if name in flat:
+                    del flat[name]
+                    self._save(app, flat)
+            else:
+                nested = self._load_nested(app)
+                submap = nested.get(namespace)
+                if submap is not None and name in submap:
+                    del submap[name]
+                    if not submap:
+                        del nested[namespace]   # drop the now-empty namespace, not an empty {}
+                    self._save(app, nested)
 
-    def names(self, app: str) -> list[str]:
-        """The stored key names, sorted -- never the values.
+    def names(self, app: str, *, namespace: str | None = None) -> list[str]:
+        """The stored key names (within ``namespace`` when given), sorted -- never the values.
 
         Raises:
             DecryptionError / CredentialsError: as for ``get``.
         """
-        return sorted(self._load(app))
+        if namespace is None:
+            return sorted(self._load_flat(app))
+        return sorted(self._load_nested(app).get(namespace, {}))
 
-    def _load(self, app: str) -> dict[str, str]:
+    def _decrypt(self, app: str) -> bytes | None:
+        """Decrypt the store to its plaintext JSON bytes, or ``None`` when the store file is absent.
+        The returned bytes are the ONLY reference to the decrypted plaintext -- the caller (``_load_*``)
+        must ``parse_store`` and ``del`` them before any raise, so a malformed-store error's frame
+        cannot retain them. Every decrypt/KDF failure is raised HERE, from a frame where the
+        passphrase and blob are already gone.
+
+        Raises:
+            DecryptionError: wrong passphrase or tampering -- content-free.
+            CredentialsError: unreadable file, an unsupported/too-new build, or a KDF-unavailable build.
+        """
         _ensure_kdf_available()   # before any passphrase.reveal(), so an unsupported build is content-free
         path = self.path(app)
         try:
             blob = path.read_bytes()
         except FileNotFoundError:
-            return {}
+            return None
         except OSError as err:
             raise CredentialsError(f"could not read {path}: {err}") from err
         # The file is ciphertext, but a group/world-readable .enc still invites an offline
@@ -157,20 +197,41 @@ class EncryptedFileBackend:
             raise DecryptionError(
                 f"could not decrypt {path}: wrong passphrase or tampering"
             )
-        # `outcome` is the ONLY reference to the decrypted plaintext; drop it (not a second alias)
-        # before any raise, so a malformed-store CredentialsError's traceback frame cannot retain
-        # the decrypted store bytes. Aliasing it to a `plaintext` name and deleting only that would
-        # leave `outcome` holding the plaintext on the frame.
-        result = parse_store(outcome)
-        del outcome
+        return outcome
+
+    def _load_flat(self, app: str) -> dict[str, str]:
+        """Decrypt and parse the store as a flat ``name -> secret`` map, or ``{}`` when absent."""
+        plaintext = self._decrypt(app)
+        if plaintext is None:
+            return {}
+        # `plaintext` is the ONLY reference to the decrypted bytes; drop it before any raise, so a
+        # malformed-store CredentialsError's traceback frame cannot retain the decrypted store.
+        result = parse_store(plaintext)
+        del plaintext
         if isinstance(result, StoreFault):
-            raise CredentialsError(f"the decrypted store {path} is malformed")
+            raise CredentialsError(
+                f"the decrypted store {self.path(app)} is malformed"
+                f"{layout_mismatch_hint(nested=False, kind=result.kind)}")
         return result
 
-    def _save(self, app: str, secret_value_by_name: dict[str, str]) -> None:
+    def _load_nested(self, app: str) -> dict[str, dict[str, str]]:
+        """Decrypt and parse the store as a two-level ``namespace -> {name -> secret}`` map, or
+        ``{}`` when absent. Same drop-before-raise contract as ``_load_flat``."""
+        plaintext = self._decrypt(app)
+        if plaintext is None:
+            return {}
+        result = parse_store(plaintext, nested=True)
+        del plaintext
+        if isinstance(result, StoreFault):
+            raise CredentialsError(
+                f"the decrypted store {self.path(app)} is malformed"
+                f"{layout_mismatch_hint(nested=True, kind=result.kind)}")
+        return result
+
+    def _save(self, app: str, store: dict[str, str] | dict[str, dict[str, str]]) -> None:
         _ensure_kdf_available()   # before any passphrase.reveal(), so an unsupported build is content-free
         path = self.path(app)
-        encoded = serialize_store(secret_value_by_name)
+        encoded = serialize_store(store)
         if isinstance(encoded, StoreFault):
             raise CredentialsError(f"{path} could not be serialized: a value is not encodable")
         blob = _encrypt(encoded, self._passphrase.reveal(), app)
@@ -180,7 +241,7 @@ class EncryptedFileBackend:
             # signal (never raised), so the passphrase and the serialized-plaintext frame are off the
             # traceback and `__cause__`/`__context__` are None -- as on the read path. This is NOT,
             # however, frame-clean: unlike a read, a write inherently holds the plaintext map --
-            # `secret_value_by_name` stays bound here and in the `set`/`unset` callers -- the accepted
+            # `store` stays bound here and in the `set`/`unset` callers -- the accepted
             # object-level residual of a write (see FileBackend._save). Content-free message.
             raise CredentialsError(
                 f"could not write {path}: Argon2id key derivation failed in this cryptography/OpenSSL build"
@@ -196,9 +257,10 @@ class EncryptedFileBackend:
 class _CryptoOutcome(Enum):
     """A non-plaintext result of a decrypt-or-encrypt attempt (both re-derive the key), RETURNED
     (never raised) so the frames that hold the passphrase (``_derive_key``) or the serialized
-    plaintext (``_encrypt``) are never attached to an escaping exception's traceback. ``_load`` and
-    ``_save`` map each member to a content-free error raised from their own frame, where no
-    exception is in flight (so ``__cause__``/``__context__`` are ``None``)."""
+    plaintext (``_encrypt``) are never attached to an escaping exception's traceback. The store
+    loaders (``_load_flat``/``_load_nested``) and ``_save`` map each member to a content-free error
+    raised from their own frame, where no exception is in flight (so ``__cause__``/``__context__``
+    are ``None``)."""
 
     FAILED = auto()           # wrong passphrase, tampering, or a malformed/relocated blob
     NEWER_VERSION = auto()    # a well-formed header whose version this build does not understand
@@ -254,8 +316,8 @@ def _derive_key(
         # (write) or up to the clamped 256 MiB / 16 lanes (read), which an OpenSSL build can still
         # reject param-specifically (e.g. no thread support for lanes>1) even though the probe
         # passed. RETURN the failure -- never raise -- so this frame, which holds `passphrase`, is
-        # not attached to any escaping exception's traceback; _load/_save turn the signal into a
-        # content-free CredentialsError from their own clean frame. (Distinct from wrong-passphrase:
+        # not attached to any escaping exception's traceback; the store loaders/_save turn the signal
+        # into a content-free CredentialsError from their own clean frame. (Distinct from wrong-passphrase:
         # this is a build-capability failure, so the caller says "upgrade", not "wrong passphrase".)
         return _CryptoOutcome.KDF_UNAVAILABLE
 
@@ -319,6 +381,9 @@ def _try_decrypt(blob: bytes, passphrase: str, app: str) -> bytes | _CryptoOutco
             # malformed and falls through to a normal decrypt failure.
             return _CryptoOutcome.NEWER_VERSION if isinstance(version, int) and version > 1 else _CryptoOutcome.FAILED
         salt = base64.b64decode(header["salt"])
+        if len(salt) < _SALT_LEN:
+            return _CryptoOutcome.FAILED   # a too-short/empty salt is malformed or tampered
+
         time_cost = _clamp(int(header["t"]), 1, _MAX_TIME_COST)
         memory_cost = _clamp(int(header["m"]), 8 * _MAX_LANES, _MAX_MEMORY_COST_KIB)
         lanes = _clamp(int(header["p"]), 1, _MAX_LANES)

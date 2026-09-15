@@ -14,8 +14,10 @@ Python 앱·CLI용 시크릿 저장소. 경로는 기본 XDG, 요청 시 OS 네�
   예외·트레이스백에 값 없음.
 - **정직한 기본값** — 0700 디렉터리 안 0600 평문 `credentials.json`. 키링·암호화는 opt-in.
 - **의존성 0** — `keyring`·`cryptography`는 필요 시 extra.
+- **공유·통합** — 한 키를 여러 앱이 공유하거나, 여러 도구의 시크릿을 한 파일로 통합(§3의 공유 저장소·namespace).
 
-원자적 쓰기·권한·프로세스 간 잠금·XDG 경로·로그 마스킹을 한데 묶어 테스트했습니다. 디렉터리는
+원자적 쓰기·권한·프로세스 간 잠금·XDG 경로·로그 마스킹을 한 단위로 묶어 테스트했습니다. 새로운 볼트가
+아니라, 검증된 표준 기법을 조합할 뿐 새 암호를 발명하지 않습니다. 디렉터리는
 [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/)을 따릅니다.
 
 ## 1. 설치
@@ -80,6 +82,47 @@ key.reveal()                              # -> "sk-..."  HTTP 클라이언트에
 **공유 저장소**는 여러 앱이 함께 쓰는 키를 한 번만 두는 방법입니다 — 공유 앱(예: `"auth"`)에 저장하고, 각
 앱이 `shared=["auth"]`로 함께 읽습니다. 한 앱에만 필요한 키는 그 앱 저장소에 둡니다.
 
+**namespace(네임스페이스)**는 반대 방향입니다 — 한 앱의 저장소 안에서 여러 도구의 시크릿을 *같은* 파일의
+별도 구획에 키 이름 충돌 없이 담게 해줍니다. 한 앱을 컨테이너로 삼고 각 도구에 자기 namespace를 주면 됩니다
+— 도구마다 앱·파일을 따로 둘 필요가 없습니다. `Credentials(app, namespace="thinchat")`는 `thinchat` 구획만
+읽고 씁니다. `namespace=None`(기본값)은 기존 flat 저장소 그대로입니다.
+
+**여러 도구, 한 파일.** 각 도구의 키를 호스트 앱 하나의 자기 namespace 아래 둡니다 — CLI(`--namespace`, 또는
+`-n`) 또는 코드로:
+
+```sh
+credbox set yourapp GEMINI_API_KEY -n thinchat   # 화면 표시 없이 입력
+credbox set yourapp SMTP_PASSWORD  -n mailer
+credbox list yourapp -n thinchat                 # 한 구획만 조회
+```
+
+```python
+from credbox import Credentials
+key = Credentials("yourapp", namespace="thinchat").require("GEMINI_API_KEY")   # 다시 읽기
+```
+
+전부 한 파일 `~/.config/yourapp/credentials.json`에 들어갑니다:
+
+```json
+{ "thinchat": {"GEMINI_API_KEY": "…"}, "mailer": {"SMTP_PASSWORD": "…"} }
+```
+
+한 앱의 자격증명 **파일**은 flat이거나 namespaced 중 하나입니다 — namespace가 생기면 flat 접근(namespace
+없이)은 손상 대신 예외가 나고 그 반대도 마찬가지 — 그러니 namespaced 저장소엔 새 앱 이름을 주거나, 기존
+flat 저장소를 마이그레이션(아래)하세요. namespace는 공유·앱 저장소 단계만 구획합니다. 환경변수·override
+단계는 이름만으로 해석되므로 같은 `name`은 namespace와 무관하게 같은 환경변수를 읽습니다. CLI에서는
+`--namespace/-n` 또는 `CREDBOX_NAMESPACE` 환경변수로 namespace를 고릅니다. git 자격증명 헬퍼는 flat 전용입니다.
+
+**flat 저장소를 namespace로 마이그레이션.** flat과 namespaced는 한 파일에 공존할 수 없으니 중간에 비웁니다:
+각 flat 키를 읽고(`credbox get app K --reveal`), 전부 제거한 뒤(`credbox unset app K` — 마지막 키가 사라지면
+저장소는 빈 상태), 각각을 namespace 아래 다시 저장합니다(`credbox set app K -n ns`).
+
+여러 도구가 한 저장소를 공유할 때 주의 두 가지. 환경변수 단계는 namespace를 무시하므로, 두 namespace가 같은
+일반 이름(`API_KEY`)을 `$API_KEY`에서 각자 해석하면 *같은* 값을 받습니다 — env 이름에 접두어
+(`THINCHAT_API_KEY`)를 붙여 분리하세요. 그리고 통합 저장소를 **여러 머신**에서 동기화 폴더(Dropbox, NFS)를
+통해 쓰면, 크로스-프로세스 lock이 머신 간에는 미치지 않아 한 namespace의 갱신이 동기화 충돌로 유실될 수
+있습니다 — 공유 저장소는 한 머신에서만 쓰거나, 도구를 별도 저장소로 두세요.
+
 ## 4. `credbox` 명령
 
 어느 앱의 시크릿이든 한 곳에서 같은 방식으로 다룹니다:
@@ -88,10 +131,11 @@ key.reveal()                              # -> "sk-..."  HTTP 클라이언트에
 credbox set myapp API_KEY               # 화면에 표시하지 않고 입력받아 저장 (0600)
 credbox set myapp API_KEY --value sk-…  # 값 직접 전달 (argv에 노출; 프롬프트 권장)
 credbox list myapp                      # 이름만
-credbox get myapp API_KEY               # 마스킹 출력 (API_…cdef); 저장값만
+credbox get myapp API_KEY               # 마스킹 출력 (API_...cdef); 저장값만
 credbox get myapp API_KEY --reveal      # 전체 출력 (실제 값이 화면에 나가는 유일한 경로)
 credbox get myapp API_KEY --resolve     # 환경변수까지 함께 참조
 credbox unset myapp API_KEY
+credbox set myapp API_KEY -n thinchat   # -n/--namespace: 저장소의 한 구획 안에서 동작
 credbox path myapp                      # credentials.json 경로
 credbox dirs myapp                      # 디렉터리 다섯 개
 credbox doctor                          # 모든 앱의 권한 점검
@@ -99,8 +143,10 @@ credbox doctor                          # 모든 앱의 권한 점검
 
 `set`은 터미널에선 (에코 없이) 입력받고, 스크립트·CI에선 값을 stdin으로 파이프하세요
 (`printf %s "$TOKEN" | credbox set myapp API_KEY`) — `--value`와 달리 시크릿이 프로세스 인자
-목록에 안 남는 argv-안전 경로입니다. `--keyring`을 붙이면 OS 키링 백엔드(`credbox[keyring]` 필요;
-런타임에 키링을 못 쓰면 파일 저장소 사용)를 씁니다. CLI는 트레이스백을 찍지 않고, 오류는 stderr에 값
+목록에 안 남는 argv-안전 경로입니다. `set`·`get`·`list`·`unset`은 `--namespace/-n`(또는
+`CREDBOX_NAMESPACE` 환경변수, 플래그가 우선)으로 namespaced 저장소의 한 구획 안에서 동작합니다 — §3의
+"여러 도구, 한 파일" 레시피 참조. `--keyring`을 붙이면 OS 키링 백엔드(`credbox[keyring]` 필요; 런타임에
+키링을 못 쓰면 파일 저장소 사용)를 씁니다. CLI는 트레이스백을 찍지 않고, 오류는 stderr에 값
 없는 한 줄로 냅니다. 종료 코드는 성공 `0`, 명령 실패 `1`(`doctor`가 소유자 외 접근 가능한 파일·디렉터리를
 찾은 경우 포함), 사용법 오류 `2`.
 
@@ -236,7 +282,7 @@ with single_instance("myapp", name="poll") as acquired:
 
 | Import | 설명 |
 |--------|------|
-| `Credentials(app, *, shared=(), backend=None)` | 네 단계 시크릿 리졸버: `.secret` / `.require` / `.set` / `.unset` / `.names`. |
+| `Credentials(app, *, namespace=None, shared=(), backend=None)` | 네 단계 시크릿 리졸버: `.secret` / `.require` / `.set` / `.unset` / `.names`. `namespace`는 한 앱 저장소 안의 컴포넌트별 구획으로 저장을 한정합니다. |
 | `Secret` / `mask_secret` | 로그에 새지 않는 값 타입(`.reveal()`로 실제 문자열)과 표준 마스크. |
 | `config_dir` / `data_dir` / `state_dir` / `cache_dir` / `runtime_dir` | 앱의 XDG 디렉터리. |
 | `default_backend` / `file_backend` / `keyring_backend` / `encrypted_backend` | 백엔드 선택기와 팩토리. |

@@ -78,16 +78,30 @@ def app_dir_segment(app: str) -> str:
         InvalidAppNameError: ``app`` is not a valid directory segment (a caller mistake; also
             a ``ValueError``).
     """
-    if not _APP_NAME.fullmatch(app):
+    return _valid_segment(app, label="app name")
+
+
+def _valid_segment(value: str, *, label: str) -> str:
+    """The shared segment rule behind ``app_dir_segment`` and the ``Credentials`` namespace check:
+    return ``value`` unchanged once validated as a safe single path segment, or raise. ``label``
+    names the value in the error message -- ``"app name"`` for an app directory, ``"namespace"`` for
+    a namespace whose value composes into a keyring service name -- so the message fits whichever the
+    caller validates. The rule itself (charset, no separator/``..``, Windows reserved) is identical.
+
+    Raises:
+        InvalidAppNameError: ``value`` is not a valid segment (a caller mistake; also a
+            ``ValueError``).
+    """
+    if not _APP_NAME.fullmatch(value):
         raise InvalidAppNameError(
-            f"invalid app name {app!r}: expected a single path segment of letters, digits, "
+            f"invalid {label} {value!r}: expected a single path segment of letters, digits, "
             f"'.', '_', '-' (e.g. 'my-app')"
         )
-    if _WINDOWS_RESERVED.fullmatch(app):
+    if _WINDOWS_RESERVED.fullmatch(value):
         raise InvalidAppNameError(
-            f"invalid app name {app!r}: it is a Windows reserved device name (con, nul, com1, ...)"
+            f"invalid {label} {value!r}: it is a Windows reserved device name (con, nul, com1, ...)"
         )
-    return app
+    return value
 
 
 def config_dir(app: str, *, layout: Layout | None = None) -> Path:
@@ -183,11 +197,20 @@ def _xdg_app_dir(kind: str, segment: str) -> Path:
 
 def _home_dir(kind: str, segment: str) -> Path:
     """``Path.home()`` as a ``CredBoxError`` rather than the ``RuntimeError`` it raises when no
-    home can be determined -- so the failure stays inside credbox's error surface."""
+    home can be determined -- so the failure stays inside credbox's error surface. A non-absolute
+    ``HOME`` (whitespace or a relative path) is rejected too: it would resolve the store against the
+    current directory, silently splitting a cron run (cwd ``/``) from an interactive one -- the same
+    hazard the XDG absolute-path override already guards against."""
     try:
-        return Path.home()
+        home = Path.home()
     except RuntimeError as err:
         raise CredBoxError(
             f"cannot locate the {kind} directory for {segment!r}: no home directory "
             f"(set HOME, or set an absolute base env var)"
         ) from err
+    if not home.is_absolute():
+        raise CredBoxError(
+            f"cannot locate the {kind} directory for {segment!r}: HOME is not an absolute path "
+            f"(set HOME to an absolute path, or set an absolute base env var)"
+        )
+    return home
