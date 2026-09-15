@@ -311,6 +311,8 @@ with single_instance("myapp", name="poll") as acquired:
 ```
 
 The lock lives in `runtime_dir` and is released by the OS when the process exits, even on a crash.
+On a filesystem that cannot lock (some NFS mounts, which report `ENOLCK`), the guard falls open —
+the job runs without cross-process protection and warns once, rather than skipping forever.
 
 ## 10. Public API reference
 

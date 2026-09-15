@@ -69,9 +69,10 @@ def test_degraded_cross_process_locking_warns_once_and_still_writes(monkeypatch,
     # When the OS lock cannot be taken (a filesystem with no working flock), the write is NOT
     # failed closed -- it proceeds under the thread lock alone -- but the loss of cross-process
     # serialization is announced once per store, not silently.
+    from credbox._oslock import LockOutcome
     from credbox.backends import _store
-
-    monkeypatch.setattr(_store, "lock_exclusive", lambda handle, *, blocking: False)
+    monkeypatch.setattr(
+        _store, "lock_exclusive", lambda handle, *, blocking: LockOutcome.UNSUPPORTED)
     # _warned_no_oslock is reset by the autouse conftest fixture, so no manual clear here.
     backend = FileBackend()
     backend.set("myapp", "a", value="va")

@@ -274,7 +274,9 @@ with single_instance("myapp", name="poll") as acquired:
     ...
 ```
 
-잠금 파일은 `runtime_dir`에 있고, 크래시로 죽어도 종료 시 OS가 풉니다.
+잠금 파일은 `runtime_dir`에 있고, 크래시로 죽어도 종료 시 OS가 풉니다. 잠금을 지원하지 않는 파일시스템
+(`ENOLCK`을 내는 일부 NFS 마운트)에서는, 영원히 건너뛰는 대신 **fail-open** — 크로스-프로세스 보호 없이
+작업을 실행하고 경고를 한 번 냅니다.
 
 ## 10. 공개 API 레퍼런스
 

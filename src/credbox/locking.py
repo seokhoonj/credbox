@@ -13,14 +13,38 @@ lock to clean up. On a platform with neither, it is a no-op that always acquires
 
 from __future__ import annotations
 
+import sys
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import IO
 
-from credbox._oslock import lock_exclusive, unlock
+from credbox._oslock import LockOutcome, lock_exclusive, unlock
 from credbox.errors import CredBoxError, LockHeldError
 from credbox.paths import app_dir_segment
 from credbox.runtime import runtime_dir
+
+_warned_no_lock: set[str] = set()
+_warn_no_lock_guard = threading.Lock()
+
+
+def _warn_no_lock_once(path: Path) -> None:
+    """Warn once per lock path that this filesystem cannot lock, so single-instance protection is
+    unavailable and the job is running without a cross-process guard. Content-free (names the lock
+    path only). Advisory locks fall open here rather than refuse to run -- see ``FileLock.acquire``."""
+    key = str(path)
+    if key in _warned_no_lock:
+        return
+    with _warn_no_lock_guard:
+        if key in _warned_no_lock:
+            return
+        _warned_no_lock.add(key)
+    print(
+        f"credbox: warning: {path} is on a filesystem without locking; single-instance "
+        f"protection is unavailable and this run proceeds without a cross-process guard",
+        file=sys.stderr,
+    )
 
 __all__ = [
     "FileLock",
@@ -64,8 +88,13 @@ class FileLock:
         return f"FileLock(app={self._app!r}, name={self._name!r}, acquired={self.acquired})"
 
     def acquire(self) -> bool:
-        """Try to take the lock without blocking. Returns ``True`` if taken, ``False`` if
-        another process already holds it. Idempotent while held.
+        """Try to take the lock without blocking. Returns ``True`` if taken; ``False`` ONLY when
+        another process genuinely holds it (so the caller should skip its run). Idempotent while held.
+
+        On a filesystem that cannot lock (e.g. some NFS mounts, which report ``ENOLCK``), a
+        single-instance lock is advisory, so this falls OPEN: it returns ``True`` and runs without a
+        cross-process guard, warning once -- rather than refuse to run forever by misreading the
+        missing lock as a held one. Two concurrent runs are then possible on such a mount.
 
         Raises:
             CredBoxError: the lock file could not be opened, or (propagated from
@@ -80,10 +109,13 @@ class FileLock:
             handle = path.open("a+")   # a+ suits both flock and msvcrt; never truncates a holder's file
         except OSError as err:
             raise CredBoxError(f"could not open lock file {path}: {err}") from err
-        if not lock_exclusive(handle, blocking=False):
+        outcome = lock_exclusive(handle, blocking=False)
+        if outcome is LockOutcome.CONTENDED:
             handle.close()
-            return False   # another process holds it
-        self._handle = handle
+            return False   # another process genuinely holds it -- skip this run
+        if outcome is LockOutcome.UNSUPPORTED:
+            _warn_no_lock_once(path)   # advisory: run anyway, without a cross-process guard
+        self._handle = handle          # ACQUIRED, or UNSUPPORTED-and-running-anyway
         return True
 
     def release(self) -> None:

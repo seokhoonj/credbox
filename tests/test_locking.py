@@ -111,3 +111,33 @@ def test_release_clears_state_even_when_unlock_fails(monkeypatch: pytest.MonkeyP
     other = FileLock("nw", name="poll")
     assert other.acquire() is True
     other.release()
+
+def test_acquire_falls_open_and_warns_when_locking_unsupported(monkeypatch, capsys):
+    # On a filesystem that cannot lock (ENOLCK), the advisory single-instance lock must RUN
+    # (fail open) rather than refuse forever -- return True and warn once, not False.
+    from credbox import locking
+    from credbox._oslock import LockOutcome
+
+    monkeypatch.setattr(locking, "_warned_no_lock", set())   # fresh warn-once state
+    monkeypatch.setattr(
+        locking, "lock_exclusive", lambda handle, *, blocking: LockOutcome.UNSUPPORTED)
+    lock = FileLock("nw", name="poll")
+    assert lock.acquire() is True          # fell open, did not refuse
+    assert lock.acquired is True
+    lock.release()
+    err = capsys.readouterr().err
+    assert "without locking" in err and "single-instance protection is unavailable" in err
+
+
+def test_single_instance_runs_when_locking_unsupported(monkeypatch, capsys):
+    # The documented cron pattern (`if not acquired: return`) must not silently stop on an
+    # unlockable filesystem: single_instance yields True so the job runs.
+    from credbox import locking
+    from credbox._oslock import LockOutcome
+
+    monkeypatch.setattr(locking, "_warned_no_lock", set())
+    monkeypatch.setattr(
+        locking, "lock_exclusive", lambda handle, *, blocking: LockOutcome.UNSUPPORTED)
+    with single_instance("nw", name="poll") as acquired:
+        assert acquired is True   # runs, not silently skipped
+    assert "single-instance protection is unavailable" in capsys.readouterr().err

@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import IO
 
-from credbox._oslock import lock_exclusive, unlock
+from credbox._oslock import LockOutcome, lock_exclusive, unlock
 from credbox.permissions import restrict_dir_to_owner
 
 __all__ = ["normalize_secret_value", "exclusive_store_lock", "CREDENTIALS_FILE", "ENCRYPTED_FILE"]
@@ -103,9 +103,11 @@ def exclusive_store_lock(path: Path) -> Iterator[None]:
             handle = None   # cannot create the lock file: rely on the thread lock alone
         locked = False
         try:
-            locked = handle is not None and lock_exclusive(handle, blocking=True)
-            if not locked:
-                _warn_no_oslock_once(path)   # degraded to thread-only: surface it, do not fail closed
+            outcome = lock_exclusive(handle, blocking=True) if handle is not None else None
+            if outcome is not LockOutcome.ACQUIRED:
+                # No OS lock taken (unavailable filesystem, or the lock file could not be created):
+                # degrade to thread-only serialization, surface it once -- never fail closed.
+                _warn_no_oslock_once(path)
             yield
         finally:
             if handle is not None:
