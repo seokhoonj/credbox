@@ -323,6 +323,7 @@ than skipping forever; `lock_unavailable` then reports `True`. Pass `require_loc
 | Import | What it is |
 |--------|------------|
 | `Credentials(app, *, namespace=None, shared=(), backend=None)` | The four-tier secret resolver: `.secret` / `.require` / `.set` / `.unset` / `.names`. `namespace` scopes the store to a component's section within one app's store. |
+| `Credentials.for_app(app, *, shared=(), backend=None)` | Embeddable alternative constructor: binds the store from `<PREFIX>_STORE_APP` / `<PREFIX>_NAMESPACE` env overrides (default: the app's own flat store), so a host can consolidate the component into its store under a namespace without a code change. |
 | `Secret` / `mask_secret` | The leak-safe value type (`.reveal()` for the raw string) and its canonical mask. |
 | `config_dir` / `data_dir` / `state_dir` / `cache_dir` / `runtime_dir` | XDG directories for an app. |
 | `default_backend` / `file_backend` / `keyring_backend` / `encrypted_backend` | Backend chooser and factories. |
@@ -354,6 +355,30 @@ from credbox import Credentials, config_dir
 settings = config_dir("myapp") / "settings.toml"     # your own config file — you manage it
 token    = Credentials("myapp").secret("API_TOKEN")  # credbox owns only the location and the secret
 ```
+
+**Make your package embeddable.** If your package might one day run *inside* another — the way a
+suite bundles several tools into one store — bind its store with `Credentials.for_app` rather than
+hardcoding `Credentials("yourpkg")`. Standalone it is identical (its own flat store), but a host can
+redirect it into a shared store, under a namespace, with two environment variables keyed by the
+package's prefix (`env_var_prefix`) — no code change:
+
+```python
+from credbox import Credentials
+
+creds = Credentials.for_app("thinchat")   # standalone -> ~/.config/thinchat/credentials.json (flat)
+```
+
+```sh
+# A host consolidates thinchat into its own store, under a "thinchat" section:
+THINCHAT_STORE_APP=newswatcher THINCHAT_NAMESPACE=thinchat  thinchat ...
+# -> Credentials("newswatcher", namespace="thinchat"), i.e. ~/.config/newswatcher/credentials.json
+```
+
+`<PREFIX>_STORE_APP` and `<PREFIX>_NAMESPACE` default to the app's own name and no namespace, so an
+unset or blank override leaves standalone behaviour byte-for-byte unchanged. The prefix is
+`env_var_prefix(app)`; that fold is lossy (`my-app`, `my.app`, `my_app` all become `MY_APP`), so
+two components whose names differ only by a separator would read the *same* override — pass their
+names through `colliding_env_var_prefixes` to catch that first.
 
 ## 12. License
 

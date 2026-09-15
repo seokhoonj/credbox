@@ -22,9 +22,10 @@ It does not compose a fallback chain itself -- keyring-over-file composition liv
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Self
 
 from credbox.backends import SecretBackend, default_backend
-from credbox.environment import env_value
+from credbox.environment import env_value, env_var_prefix
 from credbox.errors import BlankSecretError, CredentialsError
 from credbox.paths import _valid_segment, app_dir_segment
 from credbox.secret import Secret
@@ -85,6 +86,55 @@ class Credentials:
         # exact pre-0.2.0 call (no namespace kwarg) -- a custom SecretBackend written against the
         # original four-method protocol keeps working unchanged; only a namespaced call passes it.
         self._namespace_kwargs: dict[str, str] = {} if self._namespace is None else {"namespace": self._namespace}
+
+    @classmethod
+    def for_app(
+        cls,
+        app: str,
+        *,
+        shared: Sequence[str] = (),
+        backend: SecretBackend | None = None,
+    ) -> Self:
+        """Build the credentials for ``app``, letting a host process redirect the store binding.
+
+        Use this instead of ``Credentials(app)`` in a component that may be embedded in another
+        application. By default it is exactly ``Credentials(app)`` -- the flat ``app`` store, so a
+        standalone run is unchanged. But a host that wants to consolidate several components into
+        ONE store can redirect this component with two environment variables, keyed by the app's
+        own prefix (``env_var_prefix(app)``, e.g. ``THINCHAT`` for ``"thinchat"``):
+
+        - ``<PREFIX>_STORE_APP`` -- the app whose store to use instead (the host's own, e.g.
+          ``newswatcher``); defaults to ``app``.
+        - ``<PREFIX>_NAMESPACE`` -- the namespace to scope to within that store (e.g. ``thinchat``);
+          defaults to ``None`` (flat).
+
+        So a host sets ``THINCHAT_STORE_APP=newswatcher`` and ``THINCHAT_NAMESPACE=thinchat`` and
+        this returns ``Credentials("newswatcher", namespace="thinchat")`` -- the component's secrets
+        land in the host's ``credentials.json`` under a ``thinchat`` section, beside its siblings.
+        A blank or whitespace-only value reads as unset (the default applies). ``namespace`` is not
+        a parameter here -- it is resolved from ``<PREFIX>_NAMESPACE``; ``shared`` and ``backend``
+        are forwarded to the constructor unchanged. A namespaced redirect scopes the ``shared``
+        stores too (the constructor's rule), so pass ``shared`` only stores that are themselves
+        namespaced the same way -- reading a flat shared store under a namespace fails loudly with
+        ``CredentialsError``, it does not silently miss.
+
+        The prefix is ``env_var_prefix(app)``, so distinctly-named components read distinct override
+        variables -- but that fold is lossy (``my-app``, ``my.app``, ``my_app`` all become
+        ``MY_APP``), so two components whose names differ only by a separator would read the SAME
+        override; pass their names through ``colliding_env_var_prefixes`` to detect that before it bites.
+
+        Raises:
+            InvalidAppNameError: ``app`` -- or a ``<PREFIX>_STORE_APP`` / ``<PREFIX>_NAMESPACE``
+                override -- is not a valid segment. ``app`` is validated first, so a blank or
+                malformed ``app`` fails fast rather than reading an oddly-named override.
+            TypeError: ``shared`` is a bare ``str`` -- pass a sequence like ``["auth"]`` (forwarded
+                to the constructor, which rejects it).
+        """
+        app = app_dir_segment(app)   # validate the identity first: it is both the default and the env-prefix source
+        prefix = env_var_prefix(app)
+        store_app = env_value(f"{prefix}_STORE_APP") or app
+        namespace = env_value(f"{prefix}_NAMESPACE")
+        return cls(store_app, namespace=namespace, shared=shared, backend=backend)
 
     def __repr__(self) -> str:
         # Secret-safe: the app, the namespace, the shared-store order, and the backend type only --

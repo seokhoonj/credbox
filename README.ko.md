@@ -286,6 +286,7 @@ with single_instance("myapp", name="poll") as acquired:
 | Import | 설명 |
 |--------|------|
 | `Credentials(app, *, namespace=None, shared=(), backend=None)` | 네 단계 시크릿 리졸버: `.secret` / `.require` / `.set` / `.unset` / `.names`. `namespace`는 한 앱 저장소 안의 컴포넌트별 구획으로 저장을 한정합니다. |
+| `Credentials.for_app(app, *, shared=(), backend=None)` | embed 가능한 대체 생성자: `<PREFIX>_STORE_APP`·`<PREFIX>_NAMESPACE` 환경변수 override로 저장소를 바인딩(기본값은 자기 앱의 flat 저장소)해서, host가 코드 변경 없이 컴포넌트를 자기 저장소의 namespace로 통합할 수 있게 합니다. |
 | `Secret` / `mask_secret` | 로그에 새지 않는 값 타입(`.reveal()`로 실제 문자열)과 표준 마스크. |
 | `config_dir` / `data_dir` / `state_dir` / `cache_dir` / `runtime_dir` | 앱의 XDG 디렉터리. |
 | `default_backend` / `file_backend` / `keyring_backend` / `encrypted_backend` | 백엔드 선택기와 팩토리. |
@@ -316,6 +317,28 @@ from credbox import Credentials, config_dir
 settings = config_dir("myapp") / "settings.toml"     # 설정 파일은 직접 관리
 token    = Credentials("myapp").secret("API_TOKEN")  # 저장 위치와 시크릿만 credbox에
 ```
+
+**패키지를 embed 가능하게.** 이 패키지가 언젠가 다른 패키지 *안에서* 돌 수 있다면 — 여러 도구를 한
+저장소로 묶는 스위트처럼 — `Credentials("yourpkg")`로 하드코딩하지 말고 `Credentials.for_app`으로
+저장소를 바인딩하세요. 단독 실행 시엔 동일(자기 flat 저장소)하지만, host가 패키지 접두사
+(`env_var_prefix`)로 키잉된 환경변수 두 개로 코드 변경 없이 공유 저장소의 namespace로 재지정할 수 있습니다:
+
+```python
+from credbox import Credentials
+
+creds = Credentials.for_app("thinchat")   # 단독 -> ~/.config/thinchat/credentials.json (flat)
+```
+
+```sh
+# host가 thinchat을 자기 저장소의 "thinchat" 구획으로 통합:
+THINCHAT_STORE_APP=newswatcher THINCHAT_NAMESPACE=thinchat  thinchat ...
+# -> Credentials("newswatcher", namespace="thinchat"), 즉 ~/.config/newswatcher/credentials.json
+```
+
+`<PREFIX>_STORE_APP`·`<PREFIX>_NAMESPACE`는 없거나 공백이면 자기 앱 이름·namespace 없음으로 기본값을
+써서 단독 동작을 byte 단위로 그대로 둡니다. 접두사는 `env_var_prefix(app)`인데 이 폴딩은 손실적이라
+(`my-app`·`my.app`·`my_app`이 모두 `MY_APP`), 이름이 구분자만 다른 두 컴포넌트는 *같은* override를
+읽습니다 — `colliding_env_var_prefixes`로 미리 감지하세요.
 
 ## 12. 라이선스
 
