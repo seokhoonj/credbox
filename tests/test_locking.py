@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 
 import pytest
 
@@ -148,9 +149,12 @@ def test_require_lock_fails_closed_on_unlockable_filesystem(monkeypatch):
     from credbox.errors import LockHeldError, LockUnavailableError
 
     _force_unsupported(monkeypatch)
+    strict = FileLock("nw", name="poll", require_lock=True)
     with pytest.raises(LockUnavailableError) as excinfo:
-        FileLock("nw", name="poll", require_lock=True).acquire()
+        strict.acquire()
     assert not isinstance(excinfo.value, LockHeldError)   # distinct from contention
+    assert strict.acquired is False            # failed closed: nothing held
+    assert strict.lock_unavailable is False    # and nothing ran unguarded
 
     with pytest.raises(LockUnavailableError):
         with single_instance("nw", name="poll", require_lock=True):
@@ -178,6 +182,47 @@ def test_lock_unavailable_resets_on_a_later_real_acquire(monkeypatch):
     assert lock.acquire() is True      # a genuine OS lock this time
     assert lock.lock_unavailable is False
     lock.release()
+
+
+def test_lock_unavailable_is_cleared_by_release(monkeypatch):
+    # release() ends the hold, so the flag must return to False -- never the nonsensical "not held,
+    # yet reported unavailable" state. Pins the release()-side reset that keeps the "iff held"
+    # contract honest between a fall-open release and the next acquire.
+    _force_unsupported(monkeypatch)
+    lock = FileLock("nw", name="poll")
+    with pytest.warns(UserWarning):
+        lock.acquire()
+    assert lock.lock_unavailable is True
+    lock.release()
+    assert lock.acquired is False
+    assert lock.lock_unavailable is False
+
+
+def test_reacquire_while_fell_open_preserves_lock_unavailable(monkeypatch):
+    # The reset sits AFTER the idempotent early-return, so re-acquiring a still-held fell-open lock
+    # must NOT wipe the "ran unguarded" signal. Pins that ordering against a refactor that hoists the
+    # reset above the guard.
+    _force_unsupported(monkeypatch)
+    lock = FileLock("nw", name="poll")
+    with pytest.warns(UserWarning):
+        lock.acquire()
+    assert lock.acquire() is True          # idempotent early-return, no re-warn
+    assert lock.lock_unavailable is True   # signal preserved across the re-acquire
+    lock.release()
+
+
+def test_acquire_reraises_and_stays_clean_when_the_warning_is_escalated(monkeypatch):
+    # A strict caller (`-W error`) turns the fall-open UserWarning into an exception: acquire() must
+    # fail closed -- re-raise, hold nothing (the handle was closed), and NOT report lock_unavailable,
+    # because nothing ran unguarded.
+    _force_unsupported(monkeypatch)
+    lock = FileLock("nw", name="poll")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(UserWarning):
+            lock.acquire()
+    assert lock.acquired is False
+    assert lock.lock_unavailable is False
 
 
 def test_context_manager_require_lock_raises_on_unlockable_filesystem(monkeypatch):
