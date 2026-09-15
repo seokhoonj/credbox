@@ -134,3 +134,9 @@ def test_secret_copy_and_deepcopy_still_work_and_stay_masked() -> None:
         assert clone == original
         assert SECRET not in str(clone)
         assert clone.reveal() == SECRET
+
+
+def test_getstate_refuses_to_expose_cleartext() -> None:
+    # object.__getstate__ (3.11+) would return {'_value': ...} in cleartext to a generic dumper.
+    with pytest.raises(TypeError):
+        Secret("SECRETXYZ").__getstate__()

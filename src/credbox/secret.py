@@ -81,6 +81,12 @@ class Secret:
         # disclosure that defeats the masking/unhashable design. The message names no value.
         raise TypeError("Secret cannot be pickled; it would serialize the raw value in plaintext")
 
+    def __getstate__(self) -> NoReturn:
+        # Python 3.11+ ships a default object.__getstate__ that returns {'_value': ...} in cleartext.
+        # Pickle and copy are already intercepted (__reduce__ / __copy__ / __deepcopy__), but a
+        # generic third-party state-dumper could call this directly -- refuse it too, like __reduce__.
+        raise TypeError("Secret cannot be pickled; it would serialize the raw value in plaintext")
+
     def __copy__(self) -> Secret:
         # copy/deepcopy stay in memory (no serialization), so they are safe and kept working
         # explicitly -- otherwise they would fall back to __reduce__ above and raise.

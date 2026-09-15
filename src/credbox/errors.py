@@ -92,4 +92,4 @@ class MissingExtraError(CredBoxError, ImportError):
     def __init__(self, *, extra: str, dist: str) -> None:
         self.extra = extra
         self.dist = dist
-        super().__init__(f"optional feature {extra!r} is not installed; install {dist!r}")
+        super().__init__(f"optional feature {extra!r} is not installed; run 'pip install {dist}'")

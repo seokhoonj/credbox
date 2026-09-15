@@ -191,3 +191,12 @@ def test_scrub_accepts_secret_values_and_redacts_them():
     scrub_exception(err, [Secret("sk-abc123")])
     assert "sk-abc123" not in str(err)
     assert REDACTION in str(err)
+
+
+def test_scrub_redacts_lowercase_percent_encoded_echo() -> None:
+    # quote/quote_plus emit UPPERCASE hex; a server echoing the value with lowercase percent-hex
+    # (%2f, %40) must still be redacted -- the residual case-variant leak.
+    secret = "s3cr3t/p@ss"
+    scrubbed = scrub_secrets("failed for token=s3cr3t%2fp%40ss", [secret])
+    assert "s3cr3t%2fp%40ss" not in scrubbed
+    assert "***" in scrubbed
