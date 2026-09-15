@@ -22,10 +22,12 @@ both, once, the same way on every OS — and treats *not leaking the secret* as 
   **opt-in** upgrades; a missing keyring is an explicit, warned fallback, never a silent downgrade.
 - **Zero-dep core.** The default file store pulls in nothing. `keyring` and `cryptography` are
   installed only if you ask for them, and the core's import graph can never reach them.
+- **Shares and consolidates.** One key can be shared across apps, or several components' secrets
+  consolidated into one file — see the shared store and namespaces in §3.
 
-credbox is a safe re-packaging of the `keyring` ecosystem's ideas — atomic writes, correct
-permissions, cross-process locking, XDG paths, and leak-scrubbing wired together as one tested
-unit — not a novel vault. Directories follow the
+credbox stores secrets safely — atomic writes, correct permissions, cross-process locking, XDG
+paths, and leak-scrubbing wired together as one tested unit. It is not a novel vault: it assembles
+standard, well-understood techniques rather than inventing new cryptography. Directories follow the
 [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/).
 
 ## 1. Install
@@ -99,6 +101,53 @@ The **shared store** is how a key common to several apps stops being duplicated:
 under a shared app (say `"auth"`), and every consumer resolves it with `shared=["auth"]`. A key
 specific to one app stays in that app's own store.
 
+A **namespace** goes the other way: it lets one app's store hold several components' secrets in
+separate sections of the *same* file, without their key names colliding. Treat one app as the
+container and give each component its own namespace inside it — the components need no app or file
+of their own.
+`Credentials(app, namespace="thinchat")` reads and writes only the `thinchat` section;
+`namespace=None` (the default) is the original flat store, unchanged.
+
+**Several components, one file.** Put every component's key under its own namespace of one host
+app — from the CLI (`--namespace`, or `-n`) or from code:
+
+```sh
+credbox set yourapp GEMINI_API_KEY -n thinchat   # prompts without echo
+credbox set yourapp SMTP_PASSWORD  -n mailer
+credbox list yourapp -n thinchat                 # inspect one section
+```
+
+```python
+from credbox import Credentials
+key = Credentials("yourapp", namespace="thinchat").require("GEMINI_API_KEY")   # read it back
+```
+
+Everything lands in one file, `~/.config/yourapp/credentials.json`:
+
+```json
+{ "thinchat": {"GEMINI_API_KEY": "…"}, "mailer": {"SMTP_PASSWORD": "…"} }
+```
+
+An app's credentials **file** is wholly flat or wholly namespaced: once it holds namespaces, a flat
+access (no namespace) raises rather than corrupting, and the reverse too — so give a namespaced
+store a fresh app name, or migrate an existing flat one (below). The namespace scopes only the
+shared and app store tiers; the environment and override tiers resolve by name alone (the same
+`name` reads the same env var whatever the namespace). Select a namespace on the CLI with
+`--namespace/-n` or the `CREDBOX_NAMESPACE` environment variable; the git credential helper is
+flat-only.
+
+**Migrating a flat store to namespaces.** Flat and namespaced cannot coexist in one file, so empty
+it in between: read each flat key (`credbox get app K --reveal`), remove them all
+(`credbox unset app K` — the store is empty once the last is gone), then re-store each under a
+namespace (`credbox set app K -n ns`).
+
+Two caveats when several components share one store. The environment tier ignores the namespace, so
+two namespaces that both self-resolve a generic name (`API_KEY`) from `$API_KEY` get the *same*
+value — prefix the env names (`THINCHAT_API_KEY`) to keep them separate. And a consolidated store
+written from **multiple machines** over a synced folder (Dropbox, NFS) can lose one namespace's
+update to a sync conflict, because the cross-process lock does not span machines — write a shared
+store from a single machine, or keep components in separate stores.
+
 ## 4. The `credbox` command
 
 Manage any app's secrets from one place, in one format:
@@ -107,10 +156,11 @@ Manage any app's secrets from one place, in one format:
 credbox set myapp API_KEY               # prompts without echo; writes credentials.json (0600)
 credbox set myapp API_KEY --value sk-…  # or pass it directly (exposes it in argv; prefer the prompt)
 credbox list myapp                      # names only, never values
-credbox get myapp API_KEY               # masked (API_…cdef); reads the stored value only
+credbox get myapp API_KEY               # masked (API_...cdef); reads the stored value only
 credbox get myapp API_KEY --reveal      # print in full (the only raw-secret-to-stdout path)
 credbox get myapp API_KEY --resolve     # also consult the environment variable, not just the store
 credbox unset myapp API_KEY
+credbox set yourapp API_KEY -n thinchat # -n/--namespace: operate within one section of the store
 credbox path myapp                      # print the credentials.json path
 credbox dirs myapp                      # print all five directories
 credbox doctor                          # check every app's credentials file/dir permissions
@@ -119,10 +169,13 @@ credbox doctor                          # check every app's credentials file/dir
 `set` prompts (no echo) on a terminal; in a script or CI, pipe the value on stdin
 (`printf %s "$TOKEN" | credbox set myapp API_KEY`) — the argv-safe path, since unlike `--value`
 the secret never appears in the process argument list. `set`, `get`, `list`, and `unset` accept
-`--keyring` to use the OS keyring backend (requires `credbox[keyring]`; the file store is used when
-the keyring is unavailable at runtime). The CLI never prints a traceback: a runtime error becomes a
-one-line, content-free message on stderr. Exit codes: `0` success, `1` a command failure (including
-`doctor` finding a file/dir readable beyond its owner), `2` a usage error.
+`--namespace/-n` (or the `CREDBOX_NAMESPACE` environment variable, which the flag overrides) to
+operate within one section of a namespaced store — see [§3](#3-secrets) for the "several
+components, one file" recipe — and `--keyring` to use the OS keyring backend (requires
+`credbox[keyring]`; the file store is used when the keyring is unavailable at runtime). The CLI
+never prints a traceback: a runtime error becomes a one-line, content-free message on stderr. Exit
+codes: `0` success, `1` a command failure (`doctor` finding a file/dir readable beyond its owner),
+`2` a usage error.
 
 ## 5. Backends
 
@@ -264,7 +317,7 @@ The lock lives in `runtime_dir` and is released by the OS when the process exits
 
 | Import | What it is |
 |--------|------------|
-| `Credentials(app, *, shared=(), backend=None)` | The four-tier secret resolver: `.secret` / `.require` / `.set` / `.unset` / `.names`. |
+| `Credentials(app, *, namespace=None, shared=(), backend=None)` | The four-tier secret resolver: `.secret` / `.require` / `.set` / `.unset` / `.names`. `namespace` scopes the store to a component's section within one app's store. |
 | `Secret` / `mask_secret` | The leak-safe value type (`.reveal()` for the raw string) and its canonical mask. |
 | `config_dir` / `data_dir` / `state_dir` / `cache_dir` / `runtime_dir` | XDG directories for an app. |
 | `default_backend` / `file_backend` / `keyring_backend` / `encrypted_backend` | Backend chooser and factories. |

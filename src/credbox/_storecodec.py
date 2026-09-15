@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal, overload
 
 __all__ = ["StoreFaultKind", "StoreFault", "parse_store", "serialize_store"]
 
@@ -43,18 +44,34 @@ class StoreFault:
     colno: int | None = None
 
 
-def parse_store(store_bytes: bytes) -> dict[str, str] | StoreFault:
-    """Decode UTF-8 and parse JSON inside this returning frame, returning the store map
-    ``{name: secret}`` or a content-free ``StoreFault``.
+@overload
+def parse_store(
+    store_bytes: bytes, *, nested: Literal[False] = ...
+) -> dict[str, str] | StoreFault: ...
+@overload
+def parse_store(
+    store_bytes: bytes, *, nested: Literal[True]
+) -> dict[str, dict[str, str]] | StoreFault: ...
+def parse_store(
+    store_bytes: bytes, *, nested: bool = False
+) -> dict[str, str] | dict[str, dict[str, str]] | StoreFault:
+    """Decode UTF-8 and parse JSON inside this returning frame, returning the store map or a
+    content-free ``StoreFault``. ``nested=False`` (default) parses the flat ``{name: secret}`` map;
+    ``nested=True`` parses the two-level ``{namespace: {name: secret}}`` map (one store file holding
+    several components' secrets, each in its own namespace object).
 
     Narrow catches only: ``UnicodeDecodeError`` -> ``NOT_UTF8``; ``json.JSONDecodeError`` ->
     ``NOT_JSON`` (keeping the int ``lineno``/``colno``); a bare ``ValueError`` -> ``NOT_JSON``
     (``json.loads`` raises a plain ``ValueError`` -- not ``JSONDecodeError`` -- for a number
     literal past ``sys.get_int_max_str_digits()``; catching it here keeps a tampered store's raw
     bytes off the escaping traceback frame); ``RecursionError`` -> ``NESTING``. A parsed top level
-    that is not a ``dict`` -> ``NOT_OBJECT``; any value that is not a ``str`` ->
-    ``NOT_STRING_VALUE``, so a tampered ``{"k": {...}}`` never flows into ``Secret(str)``. Anything
-    else -- ``MemoryError``, ``KeyboardInterrupt`` -- propagates.
+    that is not a ``dict`` -> ``NOT_OBJECT``. In flat mode, any value that is not a ``str`` ->
+    ``NOT_STRING_VALUE``, so a tampered ``{"k": {...}}`` never flows into ``Secret(str)``; in nested
+    mode, a namespace whose value is not an object -> ``NOT_OBJECT`` and an inner non-``str`` value
+    -> ``NOT_STRING_VALUE`` (so a store written in one shape and read in the other faults rather
+    than mis-parsing). An empty ``{}`` store is valid in BOTH modes (the check loop simply does not
+    run), so an emptied store carries no shape and either mode may next write it. Anything else --
+    ``MemoryError``, ``KeyboardInterrupt`` -- propagates.
     """
     try:
         text = store_bytes.decode("utf-8")
@@ -75,14 +92,41 @@ def parse_store(store_bytes: bytes) -> dict[str, str] | StoreFault:
         del text
     if not isinstance(parsed, dict):
         return StoreFault(StoreFaultKind.NOT_OBJECT)
-    for key, value in parsed.items():
-        if not isinstance(key, str) or not isinstance(value, str):
+    if nested:
+        # Each top-level value is a namespace object of {name: secret}; a non-object namespace
+        # value means the file was written flat (or tampered) and is read here in nested mode.
+        for namespace, submap in parsed.items():
+            if not isinstance(namespace, str) or not isinstance(submap, dict):
+                return StoreFault(StoreFaultKind.NOT_OBJECT)
+            for name, value in submap.items():
+                if not isinstance(name, str) or not isinstance(value, str):
+                    return StoreFault(StoreFaultKind.NOT_STRING_VALUE)
+        return parsed
+    for name, value in parsed.items():
+        if not isinstance(name, str) or not isinstance(value, str):
             return StoreFault(StoreFaultKind.NOT_STRING_VALUE)
     return parsed
 
 
-def serialize_store(secret_value_by_name: dict[str, str]) -> bytes | StoreFault:
-    """Serialize the store map to UTF-8 JSON bytes inside this returning frame.
+def layout_mismatch_hint(*, nested: bool, kind: StoreFaultKind) -> str:
+    """A short, content-free clause appended to a malformed-store error when the fault looks like a
+    flat-vs-namespaced LAYOUT mismatch (the most common cause) rather than genuine corruption. A
+    store is wholly flat or wholly namespaced; reading it in the other mode faults here. Empty for
+    any other fault kind (real corruption keeps the bare message)."""
+    if nested and kind is StoreFaultKind.NOT_OBJECT:
+        # nested read, but a top-level value is not an object -> the store looks flat.
+        return " (or a flat store read with a namespace -- read it without one, or migrate it)"
+    if not nested and kind is StoreFaultKind.NOT_STRING_VALUE:
+        # flat read, but a value is an object -> the store looks namespaced. Caller-neutral phrasing:
+        # correct for both the CLI (-n/--namespace) and the API (namespace=...).
+        return " (or a namespaced store read without a namespace -- read it with the namespace it was written under)"
+    return ""
+
+
+def serialize_store(store: dict[str, str] | dict[str, dict[str, str]]) -> bytes | StoreFault:
+    """Serialize the store map to UTF-8 JSON bytes inside this returning frame -- the flat
+    ``{name: secret}`` map or the nested ``{namespace: {name: secret}}`` map; ``json.dumps`` encodes
+    either shape.
 
     Narrow catch only: a lone-surrogate ``UnicodeEncodeError`` (the whole store) ->
     ``NOT_ENCODABLE``, never raised out. ``ensure_ascii=False`` is required so a lone
@@ -90,7 +134,7 @@ def serialize_store(secret_value_by_name: dict[str, str]) -> bytes | StoreFault:
     Inputs are already ``str`` values, so ``json.dumps`` cannot hit a non-str ``TypeError``.
     """
     try:
-        text = json.dumps(secret_value_by_name, ensure_ascii=False)
+        text = json.dumps(store, ensure_ascii=False)
         return text.encode("utf-8")
     except UnicodeEncodeError:
         return StoreFault(StoreFaultKind.NOT_ENCODABLE)

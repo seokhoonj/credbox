@@ -134,21 +134,39 @@ def _redactable_values(secrets: SecretsArg) -> list[str]:
     values: list[str] = []
     for item in secrets:
         raw = item.reveal() if isinstance(item, Secret) else item
-        if isinstance(raw, str) and raw:
+        if isinstance(raw, str) and raw.strip():   # skip empty AND whitespace-only (would over-scrub)
             values.append(raw)
     return values
 
 
+def _percent_hex_lowercased(encoded: str) -> str:
+    """A copy of a percent-encoded string with each ``%XX`` hex pair lowercased. ``quote``/
+    ``quote_plus`` emit UPPERCASE hex (``%2F``), but RFC 3986 allows either case and a server may
+    echo the value with lowercase hex (``%2f``); redacting both forms closes that residual leak.
+    Only the two hex digits after each ``%`` change -- never the secret's own characters."""
+    out: list[str] = []
+    i, n = 0, len(encoded)
+    while i < n:
+        if encoded[i] == "%" and i + 2 < n:
+            out.append("%" + encoded[i + 1 : i + 3].lower())
+            i += 3
+        else:
+            out.append(encoded[i])
+            i += 1
+    return "".join(out)
+
+
 def _redaction_targets(secret_values: list[str]) -> list[str]:
-    """Every string that must be redacted -- each secret plus its ``quote``/``quote_plus``
-    forms -- deduplicated and ordered longest-first so no target's replacement uncovers
-    another's tail."""
+    """Every string that must be redacted -- each secret plus its ``quote``/``quote_plus`` forms
+    (and their lowercase-hex variants) -- deduplicated and ordered longest-first so no target's
+    replacement uncovers another's tail."""
     targets: set[str] = set()
     for value in secret_values:
         targets.add(value)
         try:
-            targets.add(quote(value))
-            targets.add(quote_plus(value))
+            for encoded in (quote(value), quote_plus(value)):
+                targets.add(encoded)
+                targets.add(_percent_hex_lowercased(encoded))
         except Exception:
             pass   # an exotic value that will not URL-encode: the raw form is still redacted
     return sorted(targets, key=len, reverse=True)

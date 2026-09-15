@@ -138,3 +138,10 @@ def test_names_lists_own_store_sorted() -> None:
     creds.set("b_key", value="1")
     creds.set("a_key", value="2")
     assert creds.names() == ["a_key", "b_key"]
+
+
+def test_set_rejects_a_non_str_value_without_reaching_json_dumps() -> None:
+    # A non-str, non-Secret value is a contract violation; it must raise a type-only TypeError
+    # before json.dumps, whose own TypeError would carry the value on a traceback frame.
+    with pytest.raises(TypeError, match="str or Secret"):
+        Credentials("app").set("K", value=b"bytes-not-str")   # type: ignore[arg-type]

@@ -189,3 +189,13 @@ def test_distinct_ported_hosts_do_not_collide(
 
     assert _host_to_segment("example.com:8443") != _host_to_segment("example.com:9999")
     assert _host_to_segment("github.com") == "github.com"   # a valid host is unchanged (back-compat)
+
+
+def test_host_with_a_reserved_device_first_label_maps_to_a_usable_segment() -> None:
+    # aux./con./nul./com1./lpt1. subdomains are valid DNS; they must map to a usable segment, not
+    # None -- a None would make `store` silently discard the credential and `get` never serve.
+    from credbox.gitcredential import _host_to_segment
+
+    for host in ["aux.example.com", "con.foo.com", "nul.x.com", "com1.bar.com", "lpt1.baz.com"]:
+        seg = _host_to_segment(host)
+        assert seg is not None and seg.startswith("host-")

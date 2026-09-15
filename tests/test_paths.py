@@ -157,3 +157,12 @@ def test_no_home_raises_credbox_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("credbox.paths.Path.home", staticmethod(_no_home))
     with pytest.raises(CredBoxError):
         config_dir("myapp")
+
+
+def test_config_dir_rejects_a_non_absolute_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A whitespace/relative HOME would resolve the store against the current directory, silently
+    # splitting a cron run from an interactive one; credbox must reject it, not use a relative path.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)   # force the HOME-based resolution
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path("  ")))
+    with pytest.raises(CredBoxError, match="absolute"):
+        config_dir("myapp")

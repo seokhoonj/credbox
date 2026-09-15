@@ -146,14 +146,18 @@ def _host_to_segment(host: str) -> str | None:
     try:
         return app_dir_segment(candidate)
     except InvalidAppNameError:
-        return None   # unreachable for the candidate shape above, but fail closed if it ever isn't
+        # The sanitized candidate can still start with a reserved device label -- host
+        # ``aux.example.com`` -> ``aux.example.com-<hash>``, still matched by the con/aux/... rule
+        # (its ``.*`` tail). Fall back to a hash-only segment, which always validates and is
+        # collision-free (distinct hosts -> distinct digests).
+        return app_dir_segment(f"host-{digest}")
 
 
 def _read_fields(stream: TextIO) -> dict[str, str]:
     """Parse the git credential ``key=value`` lines from ``stream`` until a blank line or EOF."""
     fields: dict[str, str] = {}
     for raw_line in stream:
-        line = raw_line.rstrip("\n")
+        line = raw_line.rstrip("\r\n")   # tolerate CRLF, though git's protocol is LF-terminated
         if line == "":
             break
         key, sep, value = line.partition("=")

@@ -5,6 +5,24 @@ A backend answers, for an ``(app, name)`` pair: read (``get``), write (``set``),
 so a resolved value cannot land in a log by accident; ``set`` accepts a ``str`` or a ``Secret``.
 ``value`` is keyword-only so it can never be swapped with ``name`` positionally -- a swap would
 store the secret *as a key name*.
+
+``namespace`` (keyword-only, default ``None``) selects a component's sub-store WITHIN one app's
+store, so several components can share one app's store without their keys colliding.
+``namespace=None`` is the flat store (the original layout, unchanged); a non-``None`` namespace
+scopes every operation to that namespace alone and leaves the others untouched.
+
+A backend TRUSTS its ``(app, name, namespace)`` inputs -- it does not validate them, exactly as it
+does not validate ``name`` (an arbitrary key). The validating boundary is the ``Credentials`` facade,
+which validates ``app``, every ``shared`` name, and a non-``None`` ``namespace`` (as a single path
+segment with no ``/``) before any of them reaches a backend. A backend then composes ``namespace``
+into a storage key (the keyring folds it into the service name ``app/namespace``); a caller driving a
+backend DIRECTLY, bypassing the facade, is responsible for passing a segment with no ``/`` so a
+namespace cannot collide with the flat ``app`` service or another namespace.
+
+``namespace`` is new in 0.2.0. ``Credentials`` omits it entirely from the call for a flat
+(``namespace=None``) resolution -- it makes the exact pre-0.2.0 four-argument call -- so a backend
+written against the original protocol (without a ``namespace`` parameter) keeps working unchanged
+for flat use; a backend that means to support namespaces must accept this keyword.
 """
 
 from __future__ import annotations
@@ -32,7 +50,8 @@ class SecretBackend(Protocol):
     an error.
     """
 
-    def get(self, app: str, name: str) -> Secret | None: ...
-    def set(self, app: str, name: str, *, value: str | Secret) -> None: ...
-    def unset(self, app: str, name: str) -> None: ...
-    def names(self, app: str) -> list[str]: ...
+    def get(self, app: str, name: str, *, namespace: str | None = None) -> Secret | None: ...
+    def set(self, app: str, name: str, *, value: str | Secret,
+            namespace: str | None = None) -> None: ...
+    def unset(self, app: str, name: str, *, namespace: str | None = None) -> None: ...
+    def names(self, app: str, *, namespace: str | None = None) -> list[str]: ...

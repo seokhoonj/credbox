@@ -32,3 +32,11 @@ def test_optional_extras_are_declared() -> None:
     # `dev` is a PEP 735 dependency group, not a published extra -- it must not leak into the
     # distribution's user-facing surface.
     assert "dev" not in extras
+
+
+def test_all_public_names_are_importable() -> None:
+    # Every name in __all__ must resolve on the package -- a listed-but-unbound name would ship a
+    # broken public surface that import alone does not catch.
+    import credbox
+    missing = [name for name in credbox.__all__ if not hasattr(credbox, name)]
+    assert missing == []

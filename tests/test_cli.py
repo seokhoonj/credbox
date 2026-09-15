@@ -89,6 +89,63 @@ def test_malformed_store_get_prints_no_secret_and_no_traceback(
     assert "Traceback" not in captured.err
 
 
+# --- namespaces --------------------------------------------------------------------
+
+def test_namespaced_set_get_list_round_trip(capsys: pytest.CaptureFixture[str]) -> None:
+    import json
+
+    from credbox.paths import config_dir
+
+    assert main(["set", "yourapp", "GEMINI_API_KEY", "--namespace", "thinchat", "--value", "g"]) == 0
+    assert main(["set", "yourapp", "smtp-password", "-n", "mailer", "--value", "m"]) == 0
+    capsys.readouterr()
+    assert main(["list", "yourapp", "--namespace", "thinchat"]) == 0
+    assert capsys.readouterr().out.split() == ["GEMINI_API_KEY"]
+    assert main(["get", "yourapp", "GEMINI_API_KEY", "-n", "thinchat", "--reveal"]) == 0
+    assert capsys.readouterr().out.strip() == "g"
+    # Both components' secrets land in one file, each under its own namespace.
+    on_disk = json.loads((config_dir("yourapp") / "credentials.json").read_text(encoding="utf-8"))
+    assert on_disk == {"thinchat": {"GEMINI_API_KEY": "g"}, "mailer": {"smtp-password": "m"}}
+
+
+def test_namespaces_are_isolated_and_unset_is_scoped(capsys: pytest.CaptureFixture[str]) -> None:
+    main(["set", "yourapp", "K", "-n", "a", "--value", "a-val"])
+    main(["set", "yourapp", "K", "-n", "b", "--value", "b-val"])
+    capsys.readouterr()
+    assert main(["unset", "yourapp", "K", "-n", "a"]) == 0
+    assert main(["get", "yourapp", "K", "-n", "a", "--reveal"]) == 1   # gone from a
+    capsys.readouterr()
+    assert main(["get", "yourapp", "K", "-n", "b", "--reveal"]) == 0
+    assert capsys.readouterr().out.strip() == "b-val"                  # b preserved
+
+
+def test_namespace_from_env_var_and_flag_overrides_it(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CREDBOX_NAMESPACE", "envns")
+    assert main(["set", "yourapp", "K", "--value", "from-env"]) == 0   # namespace from the env var
+    capsys.readouterr()
+    assert main(["get", "yourapp", "K", "--reveal"]) == 0
+    assert capsys.readouterr().out.strip() == "from-env"
+    # An explicit --namespace overrides the env var.
+    assert main(["set", "yourapp", "K", "--namespace", "flagns", "--value", "from-flag"]) == 0
+    capsys.readouterr()
+    assert main(["get", "yourapp", "K", "-n", "flagns", "--reveal"]) == 0
+    assert capsys.readouterr().out.strip() == "from-flag"
+
+
+def test_flat_command_on_a_namespaced_store_fails_with_a_layout_hint(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    main(["set", "yourapp", "K", "-n", "thinchat", "--value", "v"])   # namespaced store
+    capsys.readouterr()
+    rc = main(["list", "yourapp"])   # flat command -> layout-mismatch fault
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "namespace" in captured.err   # the hint points the user at the namespace
+    assert "Traceback" not in captured.err
+
+
 def test_missing_keyring_extra_prints_pip_hint(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
