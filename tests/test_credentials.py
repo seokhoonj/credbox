@@ -89,6 +89,123 @@ def test_set_refuses_a_blank_value() -> None:
         Credentials("myapp").set("k", value="   ")
 
 
+# --- for_app: the embeddable alternative constructor ------------------------------
+
+
+def _own_store_path(app: str):
+    from credbox.paths import config_dir
+
+    return config_dir(app) / "credentials.json"
+
+
+def _store_json(app: str) -> dict[str, object]:
+    import json
+
+    data = json.loads(_own_store_path(app).read_text())
+    assert isinstance(data, dict)   # narrows json.loads's Any and pins the store shape
+    return data
+
+
+def test_for_app_standalone_matches_the_bare_constructor() -> None:
+    # With no override env, for_app("thinchat") is exactly Credentials("thinchat") -- own flat store.
+    Credentials.for_app("thinchat").set("api_key", value="v")
+    assert _store_json("thinchat") == {"api_key": "v"}   # own flat store, not namespaced
+    assert Credentials("thinchat").secret("api_key").reveal() == "v"  # type: ignore[union-attr]
+
+
+def test_for_app_redirects_into_a_host_store_and_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A host sets BOTH <PREFIX>_STORE_APP and <PREFIX>_NAMESPACE to consolidate the component into
+    # its own store under a per-component namespace; the secret lands there, not in the own store.
+    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
+    monkeypatch.setenv("THINCHAT_NAMESPACE", "thinchat")
+    Credentials.for_app("thinchat").set("GEMINI_API_KEY", value="g-1")
+
+    assert _store_json("newswatcher") == {"thinchat": {"GEMINI_API_KEY": "g-1"}}
+    assert not _own_store_path("thinchat").exists()   # nothing in the component's own store
+    assert Credentials.for_app("thinchat").secret("GEMINI_API_KEY").reveal() == "g-1"  # type: ignore[union-attr]
+
+
+def test_for_app_store_app_only_redirects_but_stays_flat(monkeypatch: pytest.MonkeyPatch) -> None:
+    # STORE_APP without NAMESPACE: write into the host's store, still flat (no namespace section).
+    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
+    Credentials.for_app("thinchat").set("GEMINI_API_KEY", value="g-1")
+    assert _store_json("newswatcher") == {"GEMINI_API_KEY": "g-1"}   # flat in the host store
+    assert not _own_store_path("thinchat").exists()
+
+
+def test_for_app_namespace_only_stays_in_own_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    # NAMESPACE without STORE_APP: the component's OWN store, but namespaced into a section.
+    monkeypatch.setenv("THINCHAT_NAMESPACE", "chat")
+    Credentials.for_app("thinchat").set("GEMINI_API_KEY", value="g-1")
+    assert _store_json("thinchat") == {"chat": {"GEMINI_API_KEY": "g-1"}}
+
+
+def test_for_app_treats_a_blank_override_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A blank/whitespace-only override reads as absent (credbox's blank-is-absent rule), so the
+    # default (own app, flat) applies -- an exported-but-empty var does not silently break the store.
+    monkeypatch.setenv("THINCHAT_STORE_APP", "   ")
+    monkeypatch.setenv("THINCHAT_NAMESPACE", "")
+    Credentials.for_app("thinchat").set("api_key", value="v")
+    assert _store_json("thinchat") == {"api_key": "v"}   # landed in the own flat store, not elsewhere
+
+
+def test_for_app_folds_the_prefix_like_env_var_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The override key is env_var_prefix(app): "my-app" -> "MY_APP", so a hyphenated app name is
+    # redirected by MY_APP_STORE_APP, the name a shell can actually export.
+    monkeypatch.setenv("MY_APP_STORE_APP", "host")
+    Credentials.for_app("my-app").set("api_key", value="v")
+    assert _store_json("host") == {"api_key": "v"}       # the MY_APP_ override took effect
+    assert not _own_store_path("my-app").exists()
+
+
+def test_for_app_validates_the_app_before_reading_any_override() -> None:
+    from credbox.errors import InvalidAppNameError
+
+    with pytest.raises(InvalidAppNameError):
+        Credentials.for_app("")            # blank identity fails fast, not an odd "_STORE_APP" lookup
+    with pytest.raises(InvalidAppNameError):
+        Credentials.for_app("bad/app")     # a separator in the identity is rejected up front
+
+
+@pytest.mark.parametrize("var,bad", [("THINCHAT_STORE_APP", "../evil"), ("THINCHAT_NAMESPACE", "bad/ns")])
+def test_for_app_rejects_an_invalid_override(monkeypatch: pytest.MonkeyPatch, var: str, bad: str) -> None:
+    from credbox.errors import InvalidAppNameError
+
+    monkeypatch.setenv(var, bad)   # a malformed override is validated by the constructor it forwards to
+    with pytest.raises(InvalidAppNameError):
+        Credentials.for_app("thinchat")
+
+
+def test_for_app_forwards_shared() -> None:
+    # for_app resolves only the (app, namespace) binding; shared passes through unchanged.
+    Credentials("auth").set("shared_key", value="from_auth")
+    creds = Credentials.for_app("thinchat", shared=["auth"])
+    assert creds.secret("shared_key").reveal() == "from_auth"  # type: ignore[union-attr]
+
+
+def test_for_app_forwards_the_backend() -> None:
+    # The backend argument must reach the constructed Credentials -- a regression dropping it would
+    # silently fall back to the default FileBackend. Assert the passed backend actually took the write.
+    class _RecordingBackend:
+        def __init__(self) -> None:
+            self.writes: list[tuple[str, str, str | None]] = []
+
+        def get(self, app: str, name: str, *, namespace: str | None = None) -> Secret | None:
+            return None
+
+        def set(self, app: str, name: str, *, value: str | Secret, namespace: str | None = None) -> None:
+            self.writes.append((app, name, namespace))
+
+        def unset(self, app: str, name: str, *, namespace: str | None = None) -> None: ...
+
+        def names(self, app: str, *, namespace: str | None = None) -> list[str]:
+            return []
+
+    backend = _RecordingBackend()
+    Credentials.for_app("thinchat", backend=backend).set("api_key", value="v")
+    assert backend.writes == [("thinchat", "api_key", None)]   # the write reached the passed backend
+
+
 def test_shared_as_a_bare_string_is_rejected() -> None:
     # shared="auth" would iterate into 'a','u','t','h' and consult four bogus stores; reject it.
     # (mypy does NOT flag this -- a str IS a Sequence[str] -- so the runtime guard is the defense.)

@@ -37,6 +37,11 @@ _LEAKY_VARS = [
     "NW_CONFIG_DIR",
     "OPENDART_CLIENT_DATA_DIR",
     "CREDBOX_LAYOUT",
+    # for_app store-binding overrides: a developer's shell value must not redirect the tests.
+    "THINCHAT_STORE_APP",
+    "THINCHAT_NAMESPACE",
+    "MY_APP_STORE_APP",
+    "MY_APP_NAMESPACE",
 ]
 
 
