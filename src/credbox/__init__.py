@@ -34,6 +34,7 @@ from credbox.errors import (
     InvalidAppNameError,
     InvalidLayoutError,
     LockHeldError,
+    LockUnavailableError,
     MissingExtraError,
     NoKeyringError,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "InvalidLayoutError",
     "BlankSecretError",
     "LockHeldError",
+    "LockUnavailableError",
     "DecryptionError",
     "MissingExtraError",
     # resolver facade

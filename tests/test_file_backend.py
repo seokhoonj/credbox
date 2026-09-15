@@ -164,3 +164,21 @@ def test_non_string_value_in_store_raises_and_does_not_reach_secret() -> None:
     path.write_bytes(b'{"api_key": {"nested": 1}}')
     with pytest.raises(CredentialsError):
         backend.get("myapp", "api_key")
+
+
+def test_store_lock_calls_unlock_only_when_the_os_lock_was_taken(monkeypatch) -> None:
+    # Regression guard: exclusive_store_lock must call unlock() when it ACQUIRED the OS lock, and
+    # must NOT when locking was UNSUPPORTED (nothing to release). Kills the 'locked never set' bug.
+    from credbox._oslock import LockOutcome
+    from credbox.backends import _store
+
+    calls = {"unlock": 0}
+    monkeypatch.setattr(_store, "unlock", lambda handle: calls.__setitem__("unlock", calls["unlock"] + 1))
+
+    monkeypatch.setattr(_store, "lock_exclusive", lambda handle, *, blocking: LockOutcome.ACQUIRED)
+    FileBackend().set("myapp", "k", value="v")
+    assert calls["unlock"] == 1   # explicit release ran for the taken lock
+
+    monkeypatch.setattr(_store, "lock_exclusive", lambda handle, *, blocking: LockOutcome.UNSUPPORTED)
+    FileBackend().set("myapp", "k2", value="v")
+    assert calls["unlock"] == 1   # unchanged -- no OS lock was taken, so no unlock

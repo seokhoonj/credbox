@@ -164,11 +164,15 @@ def test_no_primitive_platform_reports_unsupported(monkeypatch, tmp_path):
         handle.close()
 
 
-def test_enolck_filesystem_reports_unsupported(monkeypatch, tmp_path):
-    """The core fix: a filesystem that cannot lock (POSIX flock -> ENOLCK, as on some NFS mounts)
-    must report UNSUPPORTED, distinct from CONTENDED, so a single-instance guard does not misread
-    it as 'held' and refuse to run forever."""
+@pytest.mark.parametrize("code", ["ENOLCK", "EOPNOTSUPP", "ENOSYS"])
+def test_unsupported_filesystem_errnos_report_unsupported(monkeypatch, tmp_path, code):
+    """The core fix: a filesystem that cannot lock (POSIX flock -> ENOLCK/EOPNOTSUPP/ENOSYS, as on
+    some NFS mounts or an exotic build) must report UNSUPPORTED, distinct from CONTENDED, so a
+    single-instance guard does not misread it as 'held' and refuse to run forever. Covers the
+    distinct members of _UNSUPPORTED_ERRNOS (on Linux ENOTSUP is an alias of EOPNOTSUPP)."""
     import errno as _errno
+
+    errnum = getattr(_errno, code)
 
     class FakeFcntl:
         LOCK_EX = 2
@@ -176,12 +180,34 @@ def test_enolck_filesystem_reports_unsupported(monkeypatch, tmp_path):
         LOCK_UN = 8
 
         def flock(self, handle, flags):
-            raise OSError(_errno.ENOLCK, "no locks available")
+            raise OSError(errnum, "cannot lock")
 
     monkeypatch.setattr(_oslock, "fcntl", FakeFcntl())
     handle = (tmp_path / "x.lock").open("a+")
     try:
         assert lock_exclusive(handle, blocking=False) is LockOutcome.UNSUPPORTED
         assert lock_exclusive(handle, blocking=True) is LockOutcome.UNSUPPORTED
+    finally:
+        handle.close()
+
+
+def test_windows_non_blocking_maps_a_lock_error_to_contended(monkeypatch, tmp_path):
+    """The msvcrt non-blocking branch: a lock error (EACCES, not an 'unsupported' errno) is
+    CONTENDED, so a caller skips rather than falls open."""
+    import errno as _errno
+
+    class FakeMsvcrt:
+        LK_LOCK = 0
+        LK_NBLCK = 1
+        LK_UNLCK = 2
+
+        def locking(self, fileno, mode, nbytes):
+            raise OSError(_errno.EACCES, "permission denied")
+
+    monkeypatch.setattr(_oslock, "fcntl", None)
+    monkeypatch.setattr(_oslock, "msvcrt", FakeMsvcrt())
+    handle = (tmp_path / "x.lock").open("a+")
+    try:
+        assert lock_exclusive(handle, blocking=False) is LockOutcome.CONTENDED
     finally:
         handle.close()

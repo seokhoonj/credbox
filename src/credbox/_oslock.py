@@ -53,7 +53,13 @@ class LockOutcome(Enum):
 
 
 # errnos that mean "this filesystem/platform cannot lock", as opposed to "another holder has it".
-_UNSUPPORTED_ERRNOS = frozenset({errno.ENOLCK, errno.EOPNOTSUPP, errno.ENOTSUP})
+# ENOSYS is included so an exotic build where flock is not implemented reports UNSUPPORTED rather
+# than being misread as a held lock (which would make a single-instance guard skip forever).
+# EINTR is NOT here: since PEP 475 (Python 3.5) fcntl.flock auto-retries on EINTR, so an interrupted
+# blocking wait does not surface as a spurious non-ACQUIRED outcome.
+_UNSUPPORTED_ERRNOS = frozenset(
+    {errno.ENOLCK, errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOSYS}
+)
 
 
 def lock_exclusive(handle: IO[str], *, blocking: bool) -> LockOutcome:

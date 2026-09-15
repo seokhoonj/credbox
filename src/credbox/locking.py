@@ -13,38 +13,15 @@ lock to clean up. On a platform with neither, it is a no-op that always acquires
 
 from __future__ import annotations
 
-import sys
-import threading
+import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
 from typing import IO
 
 from credbox._oslock import LockOutcome, lock_exclusive, unlock
-from credbox.errors import CredBoxError, LockHeldError
+from credbox.errors import CredBoxError, LockHeldError, LockUnavailableError
 from credbox.paths import app_dir_segment
 from credbox.runtime import runtime_dir
-
-_warned_no_lock: set[str] = set()
-_warn_no_lock_guard = threading.Lock()
-
-
-def _warn_no_lock_once(path: Path) -> None:
-    """Warn once per lock path that this filesystem cannot lock, so single-instance protection is
-    unavailable and the job is running without a cross-process guard. Content-free (names the lock
-    path only). Advisory locks fall open here rather than refuse to run -- see ``FileLock.acquire``."""
-    key = str(path)
-    if key in _warned_no_lock:
-        return
-    with _warn_no_lock_guard:
-        if key in _warned_no_lock:
-            return
-        _warned_no_lock.add(key)
-    print(
-        f"credbox: warning: {path} is on a filesystem without locking; single-instance "
-        f"protection is unavailable and this run proceeds without a cross-process guard",
-        file=sys.stderr,
-    )
 
 __all__ = [
     "FileLock",
@@ -65,24 +42,40 @@ class FileLock:
 
     Re-acquiring or releasing when not held is safe."""
 
-    def __init__(self, app: str, *, name: str) -> None:
+    def __init__(self, app: str, *, name: str, require_lock: bool = False) -> None:
         """Bind to an ``app`` and a lock ``name``. Both are validated as safe path segments
         here (fail-fast), so a crafted ``name`` such as ``"../escape"`` cannot place the
         ``.lock`` file outside the runtime directory. ``name`` is keyword-only so it cannot be
         transposed with ``app`` (two same-type strings) into a lock on the wrong path.
+
+        ``require_lock`` (default ``False``) picks the policy for a filesystem that cannot lock
+        (e.g. some NFS mounts, which report ``ENOLCK``): ``False`` falls OPEN -- ``acquire`` runs
+        without a cross-process guard and warns once (``lock_unavailable`` then reports ``True``);
+        ``True`` fails CLOSED -- ``acquire`` raises ``LockUnavailableError`` rather than run unguarded.
 
         Raises:
             InvalidAppNameError: ``app`` or ``name`` is not a valid directory segment.
         """
         self._app = app_dir_segment(app)
         self._name = app_dir_segment(name)
+        self._require_lock = require_lock
         self._handle: IO[str] | None = None
+        self._lock_unavailable = False
 
     @property
     def acquired(self) -> bool:
         """Whether this lock is currently held. Derived from the open handle -- the single source
-        of truth -- so it cannot be set to a value the handle contradicts."""
+        of truth -- so it cannot be set to a value the handle contradicts. NOTE: ``True`` covers
+        both a real OS lock and a fall-open on an unlockable filesystem -- see ``lock_unavailable``."""
         return self._handle is not None
+
+    @property
+    def lock_unavailable(self) -> bool:
+        """``True`` iff this lock is held WITHOUT a real OS lock because the filesystem cannot lock
+        (it fell open under the default ``require_lock=False``). ``acquired`` cannot show this -- it
+        is ``True`` for both a real lock and a fall-open -- so a lenient caller that still wants to
+        know it ran unguarded reads this."""
+        return self._lock_unavailable
 
     def __repr__(self) -> str:
         return f"FileLock(app={self._app!r}, name={self._name!r}, acquired={self.acquired})"
@@ -91,12 +84,14 @@ class FileLock:
         """Try to take the lock without blocking. Returns ``True`` if taken; ``False`` ONLY when
         another process genuinely holds it (so the caller should skip its run). Idempotent while held.
 
-        On a filesystem that cannot lock (e.g. some NFS mounts, which report ``ENOLCK``), a
-        single-instance lock is advisory, so this falls OPEN: it returns ``True`` and runs without a
-        cross-process guard, warning once -- rather than refuse to run forever by misreading the
-        missing lock as a held one. Two concurrent runs are then possible on such a mount.
+        On a filesystem that cannot lock (e.g. some NFS mounts, which report ``ENOLCK``): with the
+        default ``require_lock=False`` this falls OPEN -- returns ``True``, sets ``lock_unavailable``,
+        and issues a ``UserWarning`` once (a strict caller can escalate it with ``-W error``) --
+        rather than misread the missing lock as a held one and skip forever; two concurrent runs are
+        then possible there. With ``require_lock=True`` it raises ``LockUnavailableError`` instead.
 
         Raises:
+            LockUnavailableError: ``require_lock=True`` and the filesystem cannot lock.
             CredBoxError: the lock file could not be opened, or (propagated from
                 ``runtime_dir``) the runtime directory could not be created.
             InsecureStorageError: the runtime directory exists but is unsafe (propagated from
@@ -104,6 +99,7 @@ class FileLock:
         """
         if self.acquired:
             return True
+        self._lock_unavailable = False   # reflects THIS hold; reset before deciding the outcome
         path = runtime_dir(self._app) / f"{self._name}.lock"
         try:
             handle = path.open("a+")   # a+ suits both flock and msvcrt; never truncates a holder's file
@@ -114,7 +110,26 @@ class FileLock:
             handle.close()
             return False   # another process genuinely holds it -- skip this run
         if outcome is LockOutcome.UNSUPPORTED:
-            _warn_no_lock_once(path)   # advisory: run anyway, without a cross-process guard
+            if self._require_lock:
+                handle.close()
+                raise LockUnavailableError(
+                    f"{path} is on a filesystem without locking and require_lock=True: refusing to "
+                    f"run {self._name!r} for {self._app!r} without a cross-process guard"
+                )
+            try:
+                warnings.warn(
+                    f"{path} is on a filesystem without locking; single-instance protection for "
+                    f"{self._name!r} is unavailable and this run proceeds without a cross-process "
+                    f"guard",
+                    stacklevel=2,
+                )
+            except Exception:
+                # A strict caller escalated the warning (`-W error`): fail closed rather than hold
+                # an unlocked handle -- close it and let the (warning-as-)exception propagate.
+                # `_lock_unavailable` stays False: we did not run, so nothing ran unguarded.
+                handle.close()
+                raise
+            self._lock_unavailable = True   # fell open: this hold has no real OS lock behind it
         self._handle = handle          # ACQUIRED, or UNSUPPORTED-and-running-anyway
         return True
 
@@ -148,18 +163,24 @@ class FileLock:
 
 
 @contextmanager
-def single_instance(app: str, *, name: str) -> Iterator[bool]:
+def single_instance(app: str, *, name: str, require_lock: bool = False) -> Iterator[bool]:
     """Hold a ``FileLock`` for the block and yield whether it was acquired -- ``True`` to
     proceed, ``False`` when another process already holds it (the caller should skip its run).
     Convenience over ``FileLock``; unlike ``with FileLock(...)`` it does NOT raise on contention,
     so the caller decides what to do. ``name`` is keyword-only so it cannot be transposed with
     ``app``.
 
+    On a filesystem that cannot lock (some NFS mounts, ``ENOLCK``) the guard falls open by default:
+    it yields ``True`` and runs without a cross-process guard (issuing a ``UserWarning`` once), so
+    two runs can overlap there. Pass ``require_lock=True`` to fail closed instead -- it raises
+    ``LockUnavailableError`` rather than run unguarded.
+
     Raises:
+        LockUnavailableError: ``require_lock=True`` and the filesystem cannot lock.
         InvalidAppNameError: ``app`` or ``name`` is not a valid directory segment.
         CredBoxError / InsecureStorageError: propagated from ``runtime_dir``.
     """
-    lock = FileLock(app, name=name)
+    lock = FileLock(app, name=name, require_lock=require_lock)
     acquired = lock.acquire()
     try:
         yield acquired

@@ -18,6 +18,7 @@ __all__ = [
     "InvalidLayoutError",
     "BlankSecretError",
     "LockHeldError",
+    "LockUnavailableError",
     "DecryptionError",
     "MissingExtraError",
 ]
@@ -75,6 +76,14 @@ class LockHeldError(CredBoxError):
     yields ``False`` rather than raising. Distinct from the ``CredBoxError`` that ``acquire`` raises
     when the lock file cannot be opened, so a caller can tell contention (normal, skip) from a
     broken environment."""
+
+
+class LockUnavailableError(CredBoxError):
+    """A ``FileLock`` / ``single_instance`` created with ``require_lock=True`` could not take a real
+    OS lock because the filesystem does not support locking (e.g. some NFS mounts, which report
+    ``ENOLCK``). Distinct from ``LockHeldError`` (another process holds it -- normal contention): a
+    strict caller that would rather NOT run than run without a cross-process guard opts into this by
+    passing ``require_lock=True``; the default falls open (runs, warns) instead of raising."""
 
 
 class DecryptionError(CredBoxError):
