@@ -112,32 +112,78 @@ def test_release_clears_state_even_when_unlock_fails(monkeypatch: pytest.MonkeyP
     assert other.acquire() is True
     other.release()
 
-def test_acquire_falls_open_and_warns_when_locking_unsupported(monkeypatch, capsys):
-    # On a filesystem that cannot lock (ENOLCK), the advisory single-instance lock must RUN
-    # (fail open) rather than refuse forever -- return True and warn once, not False.
-    from credbox import locking
+def _force_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make lock_exclusive report UNSUPPORTED, as an unlockable filesystem (ENOLCK) would."""
+    import credbox.locking as locking
     from credbox._oslock import LockOutcome
 
-    monkeypatch.setattr(locking, "_warned_no_lock", set())   # fresh warn-once state
     monkeypatch.setattr(
         locking, "lock_exclusive", lambda handle, *, blocking: LockOutcome.UNSUPPORTED)
+
+
+def test_acquire_falls_open_and_warns_when_locking_unsupported(monkeypatch):
+    # On a filesystem that cannot lock (ENOLCK), the advisory lock must RUN (fail open) rather than
+    # refuse forever: return True, set lock_unavailable, and issue a UserWarning -- not return False.
+    _force_unsupported(monkeypatch)
     lock = FileLock("nw", name="poll")
-    assert lock.acquire() is True          # fell open, did not refuse
+    with pytest.warns(UserWarning, match="without locking"):
+        assert lock.acquire() is True          # fell open, did not refuse
     assert lock.acquired is True
+    assert lock.lock_unavailable is True       # observable: ran without a real OS lock
     lock.release()
-    err = capsys.readouterr().err
-    assert "without locking" in err and "single-instance protection is unavailable" in err
 
 
-def test_single_instance_runs_when_locking_unsupported(monkeypatch, capsys):
+def test_single_instance_runs_when_locking_unsupported(monkeypatch):
     # The documented cron pattern (`if not acquired: return`) must not silently stop on an
     # unlockable filesystem: single_instance yields True so the job runs.
-    from credbox import locking
-    from credbox._oslock import LockOutcome
+    _force_unsupported(monkeypatch)
+    with pytest.warns(UserWarning, match="single-instance protection"):
+        with single_instance("nw", name="poll") as acquired:
+            assert acquired is True   # runs, not silently skipped
 
-    monkeypatch.setattr(locking, "_warned_no_lock", set())
-    monkeypatch.setattr(
-        locking, "lock_exclusive", lambda handle, *, blocking: LockOutcome.UNSUPPORTED)
-    with single_instance("nw", name="poll") as acquired:
-        assert acquired is True   # runs, not silently skipped
-    assert "single-instance protection is unavailable" in capsys.readouterr().err
+
+def test_require_lock_fails_closed_on_unlockable_filesystem(monkeypatch):
+    # A strict caller opts into no-run-over-double-run: require_lock=True raises a DISTINCT
+    # LockUnavailableError (never LockHeldError) instead of falling open.
+    from credbox.errors import LockHeldError, LockUnavailableError
+
+    _force_unsupported(monkeypatch)
+    with pytest.raises(LockUnavailableError) as excinfo:
+        FileLock("nw", name="poll", require_lock=True).acquire()
+    assert not isinstance(excinfo.value, LockHeldError)   # distinct from contention
+
+    with pytest.raises(LockUnavailableError):
+        with single_instance("nw", name="poll", require_lock=True):
+            pass
+
+
+def test_lock_unavailable_is_false_for_a_real_lock():
+    # A genuinely-acquired lock did NOT fall open.
+    lock = FileLock("nw", name="poll")
+    assert lock.acquire() is True
+    assert lock.lock_unavailable is False
+    lock.release()
+
+
+def test_lock_unavailable_resets_on_a_later_real_acquire(monkeypatch):
+    # The property tracks THIS hold: after a fall-open, releasing and genuinely re-acquiring must
+    # report lock_unavailable=False, not carry the stale True forward.
+    _force_unsupported(monkeypatch)
+    lock = FileLock("nw", name="poll")
+    with pytest.warns(UserWarning):
+        lock.acquire()
+    assert lock.lock_unavailable is True
+    lock.release()
+    monkeypatch.undo()                 # restore the real lock_exclusive
+    assert lock.acquire() is True      # a genuine OS lock this time
+    assert lock.lock_unavailable is False
+    lock.release()
+
+
+def test_context_manager_require_lock_raises_on_unlockable_filesystem(monkeypatch):
+    from credbox.errors import LockUnavailableError
+
+    _force_unsupported(monkeypatch)
+    with pytest.raises(LockUnavailableError):
+        with FileLock("nw", name="poll", require_lock=True):
+            pytest.fail("entered the block without a lock")

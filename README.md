@@ -311,8 +311,10 @@ with single_instance("myapp", name="poll") as acquired:
 ```
 
 The lock lives in `runtime_dir` and is released by the OS when the process exits, even on a crash.
-On a filesystem that cannot lock (some NFS mounts, which report `ENOLCK`), the guard falls open —
-the job runs without cross-process protection and warns once, rather than skipping forever.
+On a filesystem that cannot lock (some NFS mounts, which report `ENOLCK`), the guard falls open by
+default — the job runs without cross-process protection and warns once (a `UserWarning`), rather
+than skipping forever; `lock_unavailable` then reports `True`. Pass `require_lock=True` (to
+`single_instance` or `FileLock`) to fail closed instead — it raises `LockUnavailableError`.
 
 ## 10. Public API reference
 
@@ -327,7 +329,7 @@ the job runs without cross-process protection and warns once, rather than skippi
 | `SecretBackend` / `FileBackend` | The backend protocol and the zero-dep file backend. |
 | `scrub_secrets` / `scrub_exception` | Redact secret values from text and exception chains. |
 | `single_instance` / `FileLock` | Single-instance advisory locking in `runtime_dir`. |
-| `CredBoxError` / `CredentialsError` / `NoKeyringError` / `InsecureStorageError` / `InvalidAppNameError` / `InvalidLayoutError` / `BlankSecretError` / `LockHeldError` / `DecryptionError` / `MissingExtraError` | The exception hierarchy. |
+| `CredBoxError` / `CredentialsError` / `NoKeyringError` / `InsecureStorageError` / `InvalidAppNameError` / `InvalidLayoutError` / `BlankSecretError` / `LockHeldError` / `LockUnavailableError` / `DecryptionError` / `MissingExtraError` | The exception hierarchy. |
 | `__version__` | The installed package version string. |
 
 ### Building blocks (for library authors)

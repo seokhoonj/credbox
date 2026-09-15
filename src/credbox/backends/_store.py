@@ -104,7 +104,8 @@ def exclusive_store_lock(path: Path) -> Iterator[None]:
         locked = False
         try:
             outcome = lock_exclusive(handle, blocking=True) if handle is not None else None
-            if outcome is not LockOutcome.ACQUIRED:
+            locked = outcome is LockOutcome.ACQUIRED   # drives the explicit unlock() in `finally`
+            if not locked:
                 # No OS lock taken (unavailable filesystem, or the lock file could not be created):
                 # degrade to thread-only serialization, surface it once -- never fail closed.
                 _warn_no_oslock_once(path)

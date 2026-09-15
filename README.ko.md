@@ -275,8 +275,9 @@ with single_instance("myapp", name="poll") as acquired:
 ```
 
 잠금 파일은 `runtime_dir`에 있고, 크래시로 죽어도 종료 시 OS가 풉니다. 잠금을 지원하지 않는 파일시스템
-(`ENOLCK`을 내는 일부 NFS 마운트)에서는, 영원히 건너뛰는 대신 **fail-open** — 크로스-프로세스 보호 없이
-작업을 실행하고 경고를 한 번 냅니다.
+(`ENOLCK`을 내는 일부 NFS 마운트)에서는 기본적으로 **fail-open** — 크로스-프로세스 보호 없이 작업을
+실행하고 `UserWarning`을 한 번 내며(`lock_unavailable`이 `True`), 영원히 건너뛰지 않습니다.
+`require_lock=True`(`single_instance`·`FileLock`에)를 주면 대신 fail-closed — `LockUnavailableError`를 냅니다.
 
 ## 10. 공개 API 레퍼런스
 
@@ -291,7 +292,7 @@ with single_instance("myapp", name="poll") as acquired:
 | `SecretBackend` / `FileBackend` | 백엔드 프로토콜과 의존성 0 파일 백엔드. |
 | `scrub_secrets` / `scrub_exception` | 텍스트와 예외 체인에서 시크릿 값 마스킹. |
 | `single_instance` / `FileLock` | `runtime_dir`의 단일 인스턴스 잠금. |
-| `CredBoxError` / `CredentialsError` / `NoKeyringError` / `InsecureStorageError` / `InvalidAppNameError` / `InvalidLayoutError` / `BlankSecretError` / `LockHeldError` / `DecryptionError` / `MissingExtraError` | 예외 계층. |
+| `CredBoxError` / `CredentialsError` / `NoKeyringError` / `InsecureStorageError` / `InvalidAppNameError` / `InvalidLayoutError` / `BlankSecretError` / `LockHeldError` / `LockUnavailableError` / `DecryptionError` / `MissingExtraError` | 예외 계층. |
 | `__version__` | 설치된 패키지 버전 문자열. |
 
 ### 빌딩 블록 (라이브러리 작성자용)
