@@ -34,7 +34,7 @@ from cryptography.exceptions import InternalError, InvalidTag, UnsupportedAlgori
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
-from credbox._storecodec import StoreFault, layout_mismatch_hint, parse_store, serialize_store
+from credbox._store_codec import StoreFault, layout_mismatch_hint, parse_store, serialize_store
 from credbox.atomic import write_bytes_atomic
 from credbox.backends._store import ENCRYPTED_FILE, exclusive_store_lock, normalize_secret_value
 from credbox.errors import CredBoxError, CredentialsError, DecryptionError
@@ -409,7 +409,7 @@ def _try_decrypt(blob: bytes, passphrase: str, app: str) -> bytes | _CryptoOutco
         # param like {"t": 1e999} parses to float('inf'), and int(inf) raises OverflowError (not a
         # ValueError). Only MemoryError/KeyboardInterrupt propagate: an OOM is not a malformed
         # header, so folding it to "wrong passphrase or tampering" would misclassify it, exactly as
-        # _storecodec keeps its own catches narrow.
+        # _store_codec keeps its own catches narrow.
         return _CryptoOutcome.FAILED
 
 

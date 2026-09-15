@@ -85,7 +85,7 @@ class KeyringBackend:
         if cleaned is not None:
             return Secret(cleaned)
         if self._fallback is not None:
-            return self._fallback.get(app, name, **_fallback_ns(namespace))
+            return self._fallback.get(app, name, **_fallback_namespace_kwargs(namespace))
         return None
 
     def set(self, app: str, name: str, *, value: str | Secret,
@@ -115,7 +115,7 @@ class KeyringBackend:
             raise _keyring_operation_error(service, name)
         if self._fallback is not None:
             try:
-                self._fallback.unset(app, name, **_fallback_ns(namespace))
+                self._fallback.unset(app, name, **_fallback_namespace_kwargs(namespace))
             except CredentialsError as err:
                 raise CredentialsError(
                     f"stored {service}/{name} in the keyring, but a stale plaintext copy may remain "
@@ -137,7 +137,7 @@ class KeyringBackend:
         if status == "no_backend":
             if self._fallback is not None:
                 _warn_keyring_fallback_once()
-                self._fallback.unset(app, name, **_fallback_ns(namespace))
+                self._fallback.unset(app, name, **_fallback_namespace_kwargs(namespace))
                 return
             raise _no_backend_error(service, name)
         if status == "failed":
@@ -146,7 +146,7 @@ class KeyringBackend:
             raise _keyring_operation_error(service, name)
         if self._fallback is not None:
             try:
-                self._fallback.unset(app, name, **_fallback_ns(namespace))
+                self._fallback.unset(app, name, **_fallback_namespace_kwargs(namespace))
             except CredentialsError as err:
                 raise CredentialsError(
                     f"deleted {service}/{name} from the keyring, but a stale plaintext copy may "
@@ -160,25 +160,25 @@ class KeyringBackend:
         Raises:
             CredentialsError: the fallback file is present but malformed.
         """
-        return self._fallback.names(app, **_fallback_ns(namespace)) if self._fallback is not None else []
+        return self._fallback.names(app, **_fallback_namespace_kwargs(namespace)) if self._fallback is not None else []
 
     def _fallback_get(self, app: str, name: str, namespace: str | None) -> Secret | None:
         """Delegate to the file fallback (the legitimate headless `no_backend` case), warning
         once; raise `NoKeyringError` when no fallback is configured."""
         if self._fallback is not None:
             _warn_keyring_fallback_once()
-            return self._fallback.get(app, name, **_fallback_ns(namespace))
+            return self._fallback.get(app, name, **_fallback_namespace_kwargs(namespace))
         raise _no_backend_error(_keyring_service(app, namespace), name)
 
     def _fallback_set(self, app: str, name: str, raw: str, namespace: str | None) -> None:
         if self._fallback is not None:
             _warn_keyring_fallback_once()
-            self._fallback.set(app, name, value=raw, **_fallback_ns(namespace))
+            self._fallback.set(app, name, value=raw, **_fallback_namespace_kwargs(namespace))
             return
         raise _no_backend_error(_keyring_service(app, namespace), name)
 
 
-def _fallback_ns(namespace: str | None) -> dict[str, str]:
+def _fallback_namespace_kwargs(namespace: str | None) -> dict[str, str]:
     """The ``namespace`` keyword to forward to the fallback backend -- empty when ``None``, so a
     fallback written against the original four-method protocol (no ``namespace`` parameter) is
     called exactly as before; only a namespaced operation passes it."""
@@ -220,9 +220,9 @@ def _keyring_operation_error(service: str, name: str) -> CredentialsError:
 # non-ImportError, which must be folded into a status here rather than escape as a raw traceback
 # whose frame retains `raw`.
 #
-# The catch is deliberately total -- it does NOT re-raise MemoryError the way _storecodec/scrub do.
+# The catch is deliberately total -- it does NOT re-raise MemoryError the way _store_codec/scrub do.
 # All three run with a secret in frame (_try_keyring_set holds `raw`), so the difference is not
-# "who has a secret" but what swallowing PRODUCES. _storecodec/scrub let MemoryError propagate only
+# "who has a secret" but what swallowing PRODUCES. _store_codec/scrub let MemoryError propagate only
 # because their swallow-alternative is worse than the frame-locals exposure -- a misclassified
 # fault, or a returned still-unscrubbed string. Here swallowing yields a safe status instead ("failed"
 # -> fail-closed raise; "no_backend" -> file fallback), so there is nothing to trade: folding a

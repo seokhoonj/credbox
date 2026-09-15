@@ -43,7 +43,7 @@ all     = ["keyring>=24", "cryptography>=44"]
 
 [project.scripts]
 credbox                = "credbox.cli:main"
-git-credential-credbox = "credbox.gitcredential:main"
+git-credential-credbox = "credbox.git_credential:main"
 
 # Development tooling is a PEP 735 dependency group, not a published extra: it stays out of the
 # distribution metadata (no `Provides-Extra: dev`), so the user-facing extras are only keyring /

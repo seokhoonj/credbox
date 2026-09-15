@@ -8,7 +8,7 @@ import io
 import pytest
 
 from credbox.credentials import Credentials
-from credbox.gitcredential import main
+from credbox.git_credential import main
 
 
 def _run(
@@ -105,7 +105,7 @@ def test_unexpected_exception_is_content_free_not_a_traceback(
     # An unexpected (non-CredBoxError) failure in a handler must be caught: nothing on stdout, a
     # content-free note on stderr, and no traceback -- the parsed fields hold the password, so a
     # traceback whose frame-locals dump would expose it must never reach the interpreter.
-    import credbox.gitcredential as gc
+    import credbox.git_credential as gc
 
     def _boom(_fields: dict[str, str]) -> None:
         raise RuntimeError("unexpected internal failure with ghp_secret123 in the message")
@@ -125,7 +125,7 @@ def test_keyboard_interrupt_during_store_is_content_free_not_a_traceback(
     # A KeyboardInterrupt (BaseException, not Exception) while handling a store -- where `fields`
     # holds the password -- must be caught by the terminal guard, not escape as a traceback whose
     # frame-locals could dump the password under a locals-printing excepthook.
-    import credbox.gitcredential as gc
+    import credbox.git_credential as gc
 
     def _interrupt(_fields: dict[str, str]) -> None:
         raise KeyboardInterrupt
@@ -185,7 +185,7 @@ def test_reply_is_suppressed_when_a_value_contains_a_newline(
 def test_distinct_ported_hosts_do_not_collide(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from credbox.gitcredential import _host_to_segment
+    from credbox.git_credential import _host_to_segment
 
     assert _host_to_segment("example.com:8443") != _host_to_segment("example.com:9999")
     assert _host_to_segment("github.com") == "github.com"   # a valid host is unchanged (back-compat)
@@ -194,7 +194,7 @@ def test_distinct_ported_hosts_do_not_collide(
 def test_host_with_a_reserved_device_first_label_maps_to_a_usable_segment() -> None:
     # aux./con./nul./com1./lpt1. subdomains are valid DNS; they must map to a usable segment, not
     # None -- a None would make `store` silently discard the credential and `get` never serve.
-    from credbox.gitcredential import _host_to_segment
+    from credbox.git_credential import _host_to_segment
 
     for host in ["aux.example.com", "con.foo.com", "nul.x.com", "com1.bar.com", "lpt1.baz.com"]:
         seg = _host_to_segment(host)

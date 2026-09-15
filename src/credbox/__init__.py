@@ -38,7 +38,7 @@ from credbox.errors import (
     MissingExtraError,
     NoKeyringError,
 )
-from credbox.jsonfile import read_json
+from credbox.json_file import read_json
 from credbox.layout import Layout, default_layout, set_default_layout
 from credbox.locking import FileLock, single_instance
 from credbox.paths import app_dir_segment, cache_dir, config_dir, data_dir, state_dir

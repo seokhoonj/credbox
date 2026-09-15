@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from credbox.jsonfile import read_json
+from credbox.json_file import read_json
 
 
 def test_reads_valid_json(tmp_path: Path) -> None:
@@ -35,13 +35,13 @@ def test_deeply_nested_json_returns_none(tmp_path: Path, monkeypatch: pytest.Mon
     # A pathologically deep nest raises RecursionError in json.loads; like any other unparseable
     # state file it is treated as absent, not allowed to escape as a traceback. Mock-forced (never
     # construct the crashing input -- a real 200k-deep parse can overflow the C stack and segfault
-    # the interpreter on some builds), mirroring tests/test_storecodec.py.
+    # the interpreter on some builds), mirroring tests/test_store_codec.py.
     def _raise(*_args: object, **_kwargs: object) -> object:
         raise RecursionError("nested too deep")
 
     path = tmp_path / "deep.json"
     path.write_text("[]")
-    monkeypatch.setattr("credbox.jsonfile.json.loads", _raise)
+    monkeypatch.setattr("credbox.json_file.json.loads", _raise)
     assert read_json(path) is None
 
 
