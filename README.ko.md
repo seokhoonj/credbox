@@ -119,7 +119,7 @@ namespace와 무관하게 같은 환경변수를 읽습니다. CLI에서는 `--n
 
 ```sh
 credbox migrate --from-app app --to-app app --to-namespace ns              # flat 저장소를 자기 구획으로 (이동: 두 layout은 공존 불가)
-credbox migrate --from-app thinchat --to-app host --to-namespace thinchat --remove-source
+credbox migrate --from-app myapp --to-app host --to-namespace myapp --remove-source
 ```
 
 flat 저장소를 **같은** 앱의 namespace로 바꾸는 건 불가피하게 키를 이동시킵니다 — flat과 namespaced
@@ -344,13 +344,13 @@ token    = Credentials("myapp").secret("API_TOKEN")  # 저장 위치와 시크�
 ```python
 from credbox import Credentials
 
-creds = Credentials.for_app("thinchat")   # 단독 -> ~/.config/thinchat/credentials.json (flat)
+creds = Credentials.for_app("myapp")   # 단독 -> ~/.config/myapp/credentials.json (flat)
 ```
 
 ```sh
-# host가 thinchat을 자기 저장소의 "thinchat" 구획으로 통합:
-THINCHAT_STORE_APP=newswatcher THINCHAT_NAMESPACE=thinchat  thinchat ...
-# -> Credentials("newswatcher", namespace="thinchat"), 즉 ~/.config/newswatcher/credentials.json
+# host가 myapp을 자기 저장소의 "myapp" 구획으로 통합:
+MYAPP_STORE_APP=host  myapp ...
+# -> Credentials("host", namespace="myapp"), 즉 ~/.config/host/credentials.json
 ```
 
 `<PREFIX>_STORE_APP`·`<PREFIX>_NAMESPACE`는 없거나 공백이면 자기 앱 이름·namespace 없음으로 기본값을

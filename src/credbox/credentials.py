@@ -194,28 +194,28 @@ class Credentials:
         application. By default it is exactly ``Credentials(app)`` -- the flat ``app`` store, so a
         standalone run is unchanged. But a host that wants to consolidate several components into
         ONE store can redirect this component with two environment variables, keyed by the app's
-        own prefix (``env_var_prefix(app)``, e.g. ``THINCHAT`` for ``"thinchat"``):
+        own prefix (``env_var_prefix(app)``, e.g. ``MYAPP`` for ``"myapp"``):
 
         - ``<PREFIX>_STORE_APP`` -- the app whose store to use instead (the host's own, e.g.
-          ``newswatcher``); defaults to ``app``.
-        - ``<PREFIX>_NAMESPACE`` -- the section to scope to within that store (e.g. ``thinchat``).
+          ``host``); defaults to ``app``.
+        - ``<PREFIX>_NAMESPACE`` -- the section to scope to within that store (e.g. ``myapp``).
           When ``<PREFIX>_STORE_APP`` redirects into a DIFFERENT app's store and this is unset, it
           DEFAULTS to ``app`` (this component's own name), so several components consolidated into
           one host store each land in their own section and never collide in its flat top level. A
           standalone run (no ``STORE_APP`` redirect) stays flat (``None``); an explicit value wins.
 
-        So a host need only set ``THINCHAT_STORE_APP=newswatcher`` and this returns
-        ``Credentials("newswatcher", namespace="thinchat")`` -- the component's secrets land in the
-        host's ``credentials.json`` under a ``thinchat`` section, beside its siblings; setting
-        ``THINCHAT_NAMESPACE`` explicitly only overrides that section name. A blank or
-        whitespace-only value reads as unset. ``namespace`` is not a parameter here -- it is
-        resolved (or defaulted) from ``<PREFIX>_NAMESPACE``; ``shared`` and ``backend`` are
-        forwarded to the constructor unchanged.
+        So a host need only set ``MYAPP_STORE_APP=host`` and this returns
+        ``Credentials("host", namespace="myapp")`` -- the component's secrets land in the host's
+        ``credentials.json`` under a ``myapp`` section, beside its siblings; setting
+        ``MYAPP_NAMESPACE`` explicitly only overrides that section name. A blank or whitespace-only
+        value reads as unset. ``namespace`` is not a parameter here -- it is resolved (or defaulted)
+        from ``<PREFIX>_NAMESPACE``; ``shared`` and ``backend`` are forwarded to the constructor
+        unchanged.
 
         A consolidated host store is therefore wholly namespaced: every embedded component lives in
         its own section, and the host's OWN keys must live under a namespace too (e.g.
-        ``Credentials("newswatcher", namespace="newswatcher")``), never flat at the top level --
-        mixing a flat key with namespaced sections in one store is refused (``CredentialsError``).
+        ``Credentials("host", namespace="host")``), never flat at the top level -- mixing a flat key
+        with namespaced sections in one store is refused (``CredentialsError``).
 
         The prefix is ``env_var_prefix(app)``, so distinctly-named components read distinct override
         variables -- but that fold is lossy (``my-app``, ``my.app``, ``my_app`` all become

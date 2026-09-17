@@ -142,7 +142,7 @@ ever echoed:
 
 ```sh
 credbox migrate --from-app app --to-app app --to-namespace ns              # a flat store into its own section (moves: the two layouts can't coexist)
-credbox migrate --from-app thinchat --to-app host --to-namespace thinchat --remove-source
+credbox migrate --from-app myapp --to-app host --to-namespace myapp --remove-source
 ```
 
 Converting a flat store to a namespace of the **same** app necessarily moves the keys — a flat and a
@@ -383,13 +383,13 @@ package's prefix (`env_var_prefix`) — no code change:
 ```python
 from credbox import Credentials
 
-creds = Credentials.for_app("thinchat")   # standalone -> ~/.config/thinchat/credentials.json (flat)
+creds = Credentials.for_app("myapp")   # standalone -> ~/.config/myapp/credentials.json (flat)
 ```
 
 ```sh
-# A host consolidates thinchat into its own store, under a "thinchat" section:
-THINCHAT_STORE_APP=newswatcher THINCHAT_NAMESPACE=thinchat  thinchat ...
-# -> Credentials("newswatcher", namespace="thinchat"), i.e. ~/.config/newswatcher/credentials.json
+# A host consolidates myapp into its own store, under a "myapp" section:
+MYAPP_STORE_APP=host  myapp ...
+# -> Credentials("host", namespace="myapp"), i.e. ~/.config/host/credentials.json
 ```
 
 `<PREFIX>_STORE_APP` and `<PREFIX>_NAMESPACE` default to the app's own name and no namespace, so an

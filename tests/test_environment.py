@@ -64,7 +64,7 @@ def test_colliding_env_var_prefixes_reports_only_collisions() -> None:
 
 def test_check_env_var_prefix_collisions_passes_when_prefixes_are_distinct() -> None:
     # The fleet's real component names must not collide -- and a distinct set is a silent no-op.
-    check_env_var_prefix_collisions(["thinchat", "mailmail", "pushpush"])
+    check_env_var_prefix_collisions(["myapp", "yourapp", "otherapp"])
 
 
 def test_check_env_var_prefix_collisions_raises_on_a_lossy_fold() -> None:

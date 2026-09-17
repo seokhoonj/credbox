@@ -107,73 +107,73 @@ def _store_json(app: str) -> dict[str, object]:
 
 
 def test_for_app_standalone_matches_the_bare_constructor() -> None:
-    # With no override env, for_app("thinchat") is exactly Credentials("thinchat") -- own flat store.
-    Credentials.for_app("thinchat").set("api_key", value="v")
-    assert _store_json("thinchat") == {"api_key": "v"}   # own flat store, not namespaced
-    assert Credentials("thinchat").secret("api_key").reveal() == "v"  # type: ignore[union-attr]
+    # With no override env, for_app("myapp") is exactly Credentials("myapp") -- own flat store.
+    Credentials.for_app("myapp").set("api_key", value="v")
+    assert _store_json("myapp") == {"api_key": "v"}   # own flat store, not namespaced
+    assert Credentials("myapp").secret("api_key").reveal() == "v"  # type: ignore[union-attr]
 
 
 def test_for_app_redirects_into_a_host_store_and_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
     # A host sets BOTH <PREFIX>_STORE_APP and <PREFIX>_NAMESPACE to consolidate the component into
     # its own store under a per-component namespace; the secret lands there, not in the own store.
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
-    monkeypatch.setenv("THINCHAT_NAMESPACE", "thinchat")
-    Credentials.for_app("thinchat").set("GEMINI_API_KEY", value="g-1")
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
+    monkeypatch.setenv("MYAPP_NAMESPACE", "myapp")
+    Credentials.for_app("myapp").set("GEMINI_API_KEY", value="g-1")
 
-    assert _store_json("newswatcher") == {"thinchat": {"GEMINI_API_KEY": "g-1"}}
-    assert not _own_store_path("thinchat").exists()   # nothing in the component's own store
-    assert Credentials.for_app("thinchat").secret("GEMINI_API_KEY").reveal() == "g-1"  # type: ignore[union-attr]
+    assert _store_json("host") == {"myapp": {"GEMINI_API_KEY": "g-1"}}
+    assert not _own_store_path("myapp").exists()   # nothing in the component's own store
+    assert Credentials.for_app("myapp").secret("GEMINI_API_KEY").reveal() == "g-1"  # type: ignore[union-attr]
 
 
 def test_for_app_store_app_only_auto_namespaces_by_app_name(monkeypatch: pytest.MonkeyPatch) -> None:
     # STORE_APP without NAMESPACE, redirecting into a DIFFERENT app, auto-scopes the component under
     # its own name -- so it lands in its own section, never in the host store's flat top level.
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
-    Credentials.for_app("thinchat").set("GEMINI_API_KEY", value="g-1")
-    assert _store_json("newswatcher") == {"thinchat": {"GEMINI_API_KEY": "g-1"}}   # own section, not flat
-    assert not _own_store_path("thinchat").exists()
-    got = Credentials.for_app("thinchat").secret("GEMINI_API_KEY")
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
+    Credentials.for_app("myapp").set("GEMINI_API_KEY", value="g-1")
+    assert _store_json("host") == {"myapp": {"GEMINI_API_KEY": "g-1"}}   # own section, not flat
+    assert not _own_store_path("myapp").exists()
+    got = Credentials.for_app("myapp").secret("GEMINI_API_KEY")
     assert got is not None and got.reveal() == "g-1"
 
 
 def test_for_app_two_components_into_one_host_store_do_not_collide(monkeypatch: pytest.MonkeyPatch) -> None:
     # Two components consolidated into one host store with ONLY STORE_APP set must not overwrite each
     # other in a shared flat slot: the auto-namespace isolates them by app name.
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
-    monkeypatch.setenv("MAILMAIL_STORE_APP", "newswatcher")
-    Credentials.for_app("thinchat").set("API_KEY", value="thin")
-    Credentials.for_app("mailmail").set("API_KEY", value="mail")
-    thin = Credentials.for_app("thinchat").secret("API_KEY")
-    mail = Credentials.for_app("mailmail").secret("API_KEY")
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
+    monkeypatch.setenv("YOURAPP_STORE_APP", "host")
+    Credentials.for_app("myapp").set("API_KEY", value="thin")
+    Credentials.for_app("yourapp").set("API_KEY", value="mail")
+    thin = Credentials.for_app("myapp").secret("API_KEY")
+    mail = Credentials.for_app("yourapp").secret("API_KEY")
     assert thin is not None and thin.reveal() == "thin"
     assert mail is not None and mail.reveal() == "mail"
-    assert _store_json("newswatcher") == {
-        "thinchat": {"API_KEY": "thin"},
-        "mailmail": {"API_KEY": "mail"},
+    assert _store_json("host") == {
+        "myapp": {"API_KEY": "thin"},
+        "yourapp": {"API_KEY": "mail"},
     }
 
 
 def test_for_app_explicit_namespace_overrides_the_auto_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
-    monkeypatch.setenv("THINCHAT_NAMESPACE", "custom")
-    Credentials.for_app("thinchat").set("K", value="v")
-    assert _store_json("newswatcher") == {"custom": {"K": "v"}}   # explicit section, not the app-name default
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
+    monkeypatch.setenv("MYAPP_NAMESPACE", "custom")
+    Credentials.for_app("myapp").set("K", value="v")
+    assert _store_json("host") == {"custom": {"K": "v"}}   # explicit section, not the app-name default
 
 
 def test_for_app_namespace_only_stays_in_own_store(monkeypatch: pytest.MonkeyPatch) -> None:
     # NAMESPACE without STORE_APP: the component's OWN store, but namespaced into a section.
-    monkeypatch.setenv("THINCHAT_NAMESPACE", "chat")
-    Credentials.for_app("thinchat").set("GEMINI_API_KEY", value="g-1")
-    assert _store_json("thinchat") == {"chat": {"GEMINI_API_KEY": "g-1"}}
+    monkeypatch.setenv("MYAPP_NAMESPACE", "chat")
+    Credentials.for_app("myapp").set("GEMINI_API_KEY", value="g-1")
+    assert _store_json("myapp") == {"chat": {"GEMINI_API_KEY": "g-1"}}
 
 
 def test_for_app_treats_a_blank_override_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     # A blank/whitespace-only override reads as absent (credbox's blank-is-absent rule), so the
     # default (own app, flat) applies -- an exported-but-empty var does not silently break the store.
-    monkeypatch.setenv("THINCHAT_STORE_APP", "   ")
-    monkeypatch.setenv("THINCHAT_NAMESPACE", "")
-    Credentials.for_app("thinchat").set("api_key", value="v")
-    assert _store_json("thinchat") == {"api_key": "v"}   # landed in the own flat store, not elsewhere
+    monkeypatch.setenv("MYAPP_STORE_APP", "   ")
+    monkeypatch.setenv("MYAPP_NAMESPACE", "")
+    Credentials.for_app("myapp").set("api_key", value="v")
+    assert _store_json("myapp") == {"api_key": "v"}   # landed in the own flat store, not elsewhere
 
 
 def test_for_app_folds_the_prefix_like_env_var_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -198,12 +198,12 @@ def test_for_app_validates_the_app_lazily_on_first_store_access() -> None:
         Credentials.for_app("bad/app").secret("K")
 
 
-@pytest.mark.parametrize("var,bad", [("THINCHAT_STORE_APP", "../evil"), ("THINCHAT_NAMESPACE", "bad/ns")])
+@pytest.mark.parametrize("var,bad", [("MYAPP_STORE_APP", "../evil"), ("MYAPP_NAMESPACE", "bad/ns")])
 def test_for_app_rejects_an_invalid_override(monkeypatch: pytest.MonkeyPatch, var: str, bad: str) -> None:
     from credbox.errors import InvalidAppNameError
 
     monkeypatch.setenv(var, bad)   # a malformed override is validated on first store access
-    creds = Credentials.for_app("thinchat")   # deferred: construction does not raise
+    creds = Credentials.for_app("myapp")   # deferred: construction does not raise
     with pytest.raises(InvalidAppNameError):
         creds.secret("K")
 
@@ -211,7 +211,7 @@ def test_for_app_rejects_an_invalid_override(monkeypatch: pytest.MonkeyPatch, va
 def test_for_app_forwards_shared() -> None:
     # for_app resolves only the (app, namespace) binding; shared passes through unchanged.
     Credentials("auth").set("shared_key", value="from_auth")
-    creds = Credentials.for_app("thinchat", shared=["auth"])
+    creds = Credentials.for_app("myapp", shared=["auth"])
     assert creds.secret("shared_key").reveal() == "from_auth"  # type: ignore[union-attr]
 
 
@@ -234,8 +234,8 @@ def test_for_app_forwards_the_backend() -> None:
             return []
 
     backend = _RecordingBackend()
-    Credentials.for_app("thinchat", backend=backend).set("api_key", value="v")
-    assert backend.writes == [("thinchat", "api_key", None)]   # the write reached the passed backend
+    Credentials.for_app("myapp", backend=backend).set("api_key", value="v")
+    assert backend.writes == [("myapp", "api_key", None)]   # the write reached the passed backend
 
 
 def test_shared_as_a_bare_string_is_rejected() -> None:
@@ -399,10 +399,10 @@ def test_store_location_names_the_file_and_section() -> None:
 
 
 def test_app_and_namespace_report_the_resolved_binding(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
-    creds = Credentials.for_app("thinchat")
-    assert creds.app == "newswatcher"          # the redirected store app
-    assert creds.namespace == "thinchat"       # auto-namespaced by the component's own name
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
+    creds = Credentials.for_app("myapp")
+    assert creds.app == "host"          # the redirected store app
+    assert creds.namespace == "myapp"       # auto-namespaced by the component's own name
     assert Credentials("myapp").app == "myapp"
     assert Credentials("myapp").namespace is None
 
@@ -410,10 +410,10 @@ def test_app_and_namespace_report_the_resolved_binding(monkeypatch: pytest.Monke
 def test_store_location_reflects_a_for_app_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
     from credbox.paths import config_dir
 
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
-    loc = Credentials.for_app("thinchat").store_location()
-    assert str(config_dir("newswatcher") / "credentials.json") in loc   # the host store, not the component's
-    assert "section 'thinchat'" in loc
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
+    loc = Credentials.for_app("myapp").store_location()
+    assert str(config_dir("host") / "credentials.json") in loc   # the host store, not the component's
+    assert "section 'myapp'" in loc
 
 
 # -- a redirect that orphans the component's own store warns once, on first store access --
@@ -424,14 +424,14 @@ def test_a_redirect_that_orphans_the_legacy_store_warns_with_the_exact_command(
     from credbox.credentials import _warned_legacy_orphan
 
     _warned_legacy_orphan.clear()   # reset the once-per-app guard for a deterministic assertion
-    Credentials("thinchat").set("K", value="v")   # a standalone store that already holds a secret
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
-    Credentials.for_app("thinchat").names()       # the FIRST store access fires the deferred warning
+    Credentials("myapp").set("K", value="v")   # a standalone store that already holds a secret
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
+    Credentials.for_app("myapp").names()       # the FIRST store access fires the deferred warning
     messages = [str(w.message) for w in recwarn]
     # the exact, correct remediation -- the auto-namespace target AND --remove-source, so running it
     # actually empties the legacy store (a bare copy would leave it orphaned and the warning recurring)
     assert any(
-        "credbox migrate --from-app thinchat --to-app newswatcher --to-namespace thinchat --remove-source"
+        "credbox migrate --from-app myapp --to-app host --to-namespace myapp --remove-source"
         in m
         for m in messages
     )
@@ -445,11 +445,11 @@ def test_reading_an_accessor_under_a_redirect_does_not_warn_or_do_store_io(
     from credbox.credentials import _warned_legacy_orphan
 
     _warned_legacy_orphan.clear()
-    Credentials("thinchat").set("K", value="v")
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
-    creds = Credentials.for_app("thinchat")
-    assert creds.app == "newswatcher" and creds.namespace == "thinchat"
-    assert "newswatcher" in creds.store_location()
+    Credentials("myapp").set("K", value="v")
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
+    creds = Credentials.for_app("myapp")
+    assert creds.app == "host" and creds.namespace == "myapp"
+    assert "host" in creds.store_location()
     assert not any("migrate" in str(w.message) for w in recwarn)   # no accessor triggered the nudge
 
 
@@ -461,9 +461,9 @@ def test_the_orphan_warning_is_deferred_off_the_override_path(
     from credbox.credentials import _warned_legacy_orphan
 
     _warned_legacy_orphan.clear()
-    Credentials("thinchat").set("K", value="v")
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
-    got = Credentials.for_app("thinchat").secret("K", override="explicit")
+    Credentials("myapp").set("K", value="v")
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
+    got = Credentials.for_app("myapp").secret("K", override="explicit")
     assert got is not None and got.reveal() == "explicit"
     assert not any("migrate" in str(w.message) for w in recwarn)
 
@@ -474,10 +474,10 @@ def test_the_orphan_warning_fires_at_most_once(
     from credbox.credentials import _warned_legacy_orphan
 
     _warned_legacy_orphan.clear()
-    Credentials("thinchat").set("K", value="v")
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
+    Credentials("myapp").set("K", value="v")
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
     for _ in range(3):
-        Credentials.for_app("thinchat").names()   # three fresh instances, three store accesses
+        Credentials.for_app("myapp").names()   # three fresh instances, three store accesses
     assert sum("migrate" in str(w.message) for w in recwarn) == 1
 
 
@@ -491,11 +491,11 @@ def test_the_orphan_warning_never_breaks_a_store_access_under_warnings_as_errors
     from credbox.credentials import _warned_legacy_orphan
 
     _warned_legacy_orphan.clear()
-    Credentials("thinchat").set("K", value="v")
-    monkeypatch.setenv("THINCHAT_STORE_APP", "newswatcher")
+    Credentials("myapp").set("K", value="v")
+    monkeypatch.setenv("MYAPP_STORE_APP", "host")
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert Credentials.for_app("thinchat").names() == []   # must not raise
+        assert Credentials.for_app("myapp").names() == []   # must not raise
 
 
 def test_no_orphan_warning_without_a_redirect(recwarn: pytest.WarningsRecorder) -> None:
@@ -513,7 +513,7 @@ def test_no_orphan_warning_when_the_legacy_store_is_empty(
     from credbox.credentials import _warned_legacy_orphan
 
     _warned_legacy_orphan.clear()
-    monkeypatch.setenv("QUIET_STORE_APP", "newswatcher")
+    monkeypatch.setenv("QUIET_STORE_APP", "host")
     Credentials.for_app("quiet").names()          # redirect active, but the own store has nothing
     assert not any("migrate" in str(w.message) for w in recwarn)
 

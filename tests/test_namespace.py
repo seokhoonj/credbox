@@ -28,7 +28,7 @@ from credbox.secret import Secret
 # --- codec ---------------------------------------------------------------------
 
 def test_codec_nested_roundtrip() -> None:
-    store = {"thinchat": {"GEMINI_API_KEY": "g"}, "mailmail": {"me@naver.com": "p"}}
+    store = {"myapp": {"GEMINI_API_KEY": "g"}, "yourapp": {"me@naver.com": "p"}}
     encoded = serialize_store(store)
     assert not isinstance(encoded, StoreFault)
     assert parse_store(encoded, nested=True) == store
@@ -43,7 +43,7 @@ def test_codec_flat_store_read_nested_faults_not_object() -> None:
 
 def test_codec_nested_store_read_flat_faults_not_string_value() -> None:
     # The object value is not a string -- what a nested store looks like read in flat mode.
-    encoded = serialize_store({"thinchat": {"GEMINI_API_KEY": "g"}})
+    encoded = serialize_store({"myapp": {"GEMINI_API_KEY": "g"}})
     assert not isinstance(encoded, StoreFault)
     assert parse_store(encoded) == StoreFault(StoreFaultKind.NOT_STRING_VALUE)
 
@@ -74,9 +74,9 @@ def test_file_namespaces_are_isolated() -> None:
 
 def test_file_on_disk_is_nested_json() -> None:
     backend = FileBackend()
-    backend.set("app", "GEMINI_API_KEY", value="g", namespace="thinchat")
+    backend.set("app", "GEMINI_API_KEY", value="g", namespace="myapp")
     on_disk = json.loads((config_dir("app") / "credentials.json").read_text(encoding="utf-8"))
-    assert on_disk == {"thinchat": {"GEMINI_API_KEY": "g"}}
+    assert on_disk == {"myapp": {"GEMINI_API_KEY": "g"}}
 
 
 def test_file_set_preserves_sibling_namespace() -> None:
@@ -286,12 +286,12 @@ def test_keyring_namespace_folds_into_the_service_name(monkeypatch: pytest.Monke
     store: dict[tuple[str, str], str] = {}
     _install_fake_keyring(monkeypatch, store)
     backend = KeyringBackend(fallback=FileBackend())
-    backend.set("app", "K", value="v", namespace="thinchat")
+    backend.set("app", "K", value="v", namespace="myapp")
     # Stored under the namespace-folded service, so a namespace's keyring entries cannot collide
     # with the app's flat entries or another namespace's.
-    assert ("app/thinchat", "K") in store
+    assert ("app/myapp", "K") in store
     assert ("app", "K") not in store
-    stored = backend.get("app", "K", namespace="thinchat")
+    stored = backend.get("app", "K", namespace="myapp")
     assert stored is not None and stored.reveal() == "v"
     assert backend.get("app", "K", namespace="other") is None
 
@@ -314,15 +314,15 @@ def test_keyring_namespaced_unset_removes_only_its_folded_entry(
 # --- Credentials facade --------------------------------------------------------
 
 def test_facade_namespaces_coexist_in_one_app_store() -> None:
-    Credentials("newswatcher", namespace="thinchat").set("GEMINI_API_KEY", value="g")
-    Credentials("newswatcher", namespace="mailmail").set("me@naver.com", value="p")
-    thinchat = Credentials("newswatcher", namespace="thinchat").secret("GEMINI_API_KEY")
-    mailmail = Credentials("newswatcher", namespace="mailmail").secret("me@naver.com")
-    assert thinchat is not None and thinchat.reveal() == "g"
-    assert mailmail is not None and mailmail.reveal() == "p"
+    Credentials("host", namespace="myapp").set("GEMINI_API_KEY", value="g")
+    Credentials("host", namespace="yourapp").set("me@naver.com", value="p")
+    myapp = Credentials("host", namespace="myapp").secret("GEMINI_API_KEY")
+    yourapp = Credentials("host", namespace="yourapp").secret("me@naver.com")
+    assert myapp is not None and myapp.reveal() == "g"
+    assert yourapp is not None and yourapp.reveal() == "p"
     # One physical file holds both components' secrets, each under its own namespace.
-    on_disk = json.loads((config_dir("newswatcher") / "credentials.json").read_text(encoding="utf-8"))
-    assert on_disk == {"thinchat": {"GEMINI_API_KEY": "g"}, "mailmail": {"me@naver.com": "p"}}
+    on_disk = json.loads((config_dir("host") / "credentials.json").read_text(encoding="utf-8"))
+    assert on_disk == {"myapp": {"GEMINI_API_KEY": "g"}, "yourapp": {"me@naver.com": "p"}}
 
 
 def test_facade_env_wins_over_a_namespaced_store(monkeypatch: pytest.MonkeyPatch) -> None:
