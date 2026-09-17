@@ -332,14 +332,14 @@ def test_facade_env_wins_over_a_namespaced_store(monkeypatch: pytest.MonkeyPatch
     assert resolved is not None and resolved.reveal() == "from-env"
 
 
-def test_facade_namespace_scopes_the_shared_store_too() -> None:
-    # The same key lives in two namespaces of a shared app; a namespaced consumer must read only its
-    # own namespace's value from that shared store, and the shared tier still precedes the own store.
-    Credentials("auth", namespace="a").set("API_KEY", value="auth-a")
-    Credentials("auth", namespace="b").set("API_KEY", value="auth-b")
-    Credentials("myapp", namespace="a").set("API_KEY", value="mine-a")   # own store, same namespace
+def test_facade_reads_a_shared_store_flat_regardless_of_namespace() -> None:
+    # A shared store is common across apps and read at its own FLAT layout, never scoped by the
+    # consumer's namespace -- so a namespaced consumer still finds the shared key (it belongs to no
+    # one component's section), and the shared tier still precedes the own store.
+    Credentials("auth").set("API_KEY", value="from-auth")                # a flat shared store
+    Credentials("myapp", namespace="a").set("API_KEY", value="mine-a")   # own (namespaced) store
     resolved = Credentials("myapp", shared=["auth"], namespace="a").secret("API_KEY")
-    assert resolved is not None and resolved.reveal() == "auth-a"   # shared/a wins, not auth-b, not own
+    assert resolved is not None and resolved.reveal() == "from-auth"    # shared (flat) wins over own
 
 
 def test_facade_names_scoped_to_namespace() -> None:
@@ -360,8 +360,11 @@ def test_facade_unset_scoped_to_namespace() -> None:
 
 
 def test_facade_invalid_namespace_names_it_as_a_namespace() -> None:
+    # The binding is validated lazily, on the first store access, not at construction -- so
+    # building the facade is fine and the error names the namespace when a store tier is consulted.
+    creds = Credentials("app", namespace="bad/namespace")
     with pytest.raises(InvalidAppNameError, match="namespace"):
-        Credentials("app", namespace="bad/namespace")
+        creds.secret("K")
 
 
 def test_facade_repr_shows_the_namespace_never_a_value() -> None:

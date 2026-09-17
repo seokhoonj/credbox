@@ -14,11 +14,14 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+from credbox.errors import CollidingPrefixError
+
 __all__ = [
     "env_value",
     "read_absolute_path_override",
     "env_var_prefix",
     "colliding_env_var_prefixes",
+    "check_env_var_prefix_collisions",
 ]
 
 
@@ -65,3 +68,21 @@ def colliding_env_var_prefixes(apps: Iterable[str]) -> dict[str, list[str]]:
     for app in apps:
         apps_by_prefix.setdefault(env_var_prefix(app), []).append(app)
     return {prefix: sorted(names) for prefix, names in apps_by_prefix.items() if len(names) > 1}
+
+
+def check_env_var_prefix_collisions(apps: Iterable[str]) -> None:
+    """Raise if any two of ``apps`` fold to the same environment-variable prefix.
+
+    The guard a host embedding several components should call ONCE at startup, before any secret is
+    stored: the prefix fold is lossy (``my-app``, ``my.app``, ``my_app`` all become ``MY_APP``), so
+    two components whose names differ only by a separator would read the same ``<PREFIX>_STORE_APP`` /
+    ``<PREFIX>_NAMESPACE`` and their stores would cross. Catching that up front turns a silent
+    wrong-store write into a loud startup error. A no-op when every prefix is distinct.
+
+    Raises:
+        CollidingPrefixError: two or more apps share a prefix -- carries the ``{prefix: [app, ...]}``
+            map so the host can name the clashing components.
+    """
+    collisions = colliding_env_var_prefixes(apps)
+    if collisions:
+        raise CollidingPrefixError(collisions)

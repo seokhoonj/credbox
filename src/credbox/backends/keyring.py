@@ -162,6 +162,14 @@ class KeyringBackend:
         """
         return self._fallback.names(app, **_fallback_namespace_kwargs(namespace)) if self._fallback is not None else []
 
+    def describe_location(self, app: str, *, namespace: str | None = None) -> str:
+        """Where ``app``'s secrets are stored: the OS-keyring service name (``app`` or the folded
+        ``app/namespace``), noting the file fallback used on keyring-less machines. Secret-free."""
+        service = _keyring_service(app, namespace)
+        if self._fallback is None:
+            return f"OS keyring, service {service!r}"
+        return f"OS keyring, service {service!r} (file fallback for keyring-less machines)"
+
     def _fallback_get(self, app: str, name: str, namespace: str | None) -> Secret | None:
         """Delegate to the file fallback (the legitimate headless `no_backend` case), warning
         once; raise `NoKeyringError` when no fallback is configured."""

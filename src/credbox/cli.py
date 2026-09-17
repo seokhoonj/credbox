@@ -25,7 +25,12 @@ from credbox import __version__
 from credbox.backends import FileBackend, default_backend
 from credbox.backends._store import CREDENTIALS_FILE, ENCRYPTED_FILE
 from credbox.credentials import Credentials
-from credbox.errors import CredBoxError, InvalidAppNameError, MissingExtraError
+from credbox.errors import (
+    CredBoxError,
+    InvalidAppNameError,
+    InvalidMigrationError,
+    MissingExtraError,
+)
 from credbox.paths import (
     _valid_segment,
     app_dir_segment,
@@ -140,6 +145,25 @@ def _build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument("app", nargs="*", help="apps to check; default: all under the config dir")
     p_doctor.set_defaults(run=_cmd_doctor)
 
+    p_migrate = sub.add_parser(
+        "migrate",
+        help="copy an app's stored secrets to another app/namespace binding (--remove-source to move; "
+        "a flat->namespace migration within the same app always moves)",
+    )
+    p_migrate.add_argument("--from-app", dest="from_app", required=True, help="the source app")
+    p_migrate.add_argument(
+        "--from-namespace", dest="from_namespace", default=None,
+        help="source namespace (default: the flat store)")
+    p_migrate.add_argument("--to-app", dest="to_app", required=True, help="the destination app")
+    p_migrate.add_argument(
+        "--to-namespace", dest="to_namespace", default=None,
+        help="destination namespace (default: the flat store)")
+    p_migrate.add_argument(
+        "--remove-source", action="store_true",
+        help="delete the secrets from the source store after copying them")
+    _add_keyring_flag(p_migrate)
+    p_migrate.set_defaults(run=_cmd_migrate)
+
     return parser
 
 
@@ -245,6 +269,29 @@ def _cmd_dirs(args: argparse.Namespace) -> int:
     print(f"state   {state_dir(args.app)}")
     print(f"cache   {cache_dir(args.app)}")
     print(f"runtime {runtime_dir(args.app, create=False)}")
+    return 0
+
+
+def _cmd_migrate(args: argparse.Namespace) -> int:
+    backend = default_backend(use_keyring=args.keyring)
+    source = Credentials(args.from_app, namespace=args.from_namespace, backend=backend)
+    dest = Credentials(args.to_app, namespace=args.to_namespace, backend=backend)
+    if args.keyring:
+        # names() lists only the file-fallback entries; a keyring-only secret cannot be enumerated,
+        # so it cannot be swept -- say so rather than silently migrating a subset.
+        print(
+            "credbox: warning: the OS keyring cannot enumerate its own keys; only file-fallback "
+            "entries migrate -- re-store any keyring-only secrets under the new binding",
+            file=sys.stderr,
+        )
+    try:
+        result = source.migrate_to(dest, remove_source=args.remove_source)
+    except InvalidMigrationError as err:   # an illegal request (same store, or same-app namespaced->flat)
+        print(f"credbox: error: {err}", file=sys.stderr)
+        return 2
+    verb = "moved" if result.moved else "copied"
+    clobbered = f", {result.overwritten} overwritten" if result.overwritten else ""
+    print(f"{verb} {result.migrated} secret(s) to {dest.store_location()}{clobbered}")
     return 0
 
 
