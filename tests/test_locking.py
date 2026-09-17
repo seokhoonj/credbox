@@ -14,16 +14,16 @@ posix_only = pytest.mark.skipif(os.name != "posix", reason="advisory file locks"
 
 
 def test_single_instance_acquires():
-    with single_instance("nw", name="poll") as acquired:
+    with single_instance("myapp", name="poll") as acquired:
         assert acquired is True
 
 
 @posix_only
 def test_second_holder_is_refused_while_held():
-    first = FileLock("nw", name="poll")
+    first = FileLock("myapp", name="poll")
     assert first.acquire() is True
     try:
-        second = FileLock("nw", name="poll")
+        second = FileLock("myapp", name="poll")
         assert second.acquire() is False   # first still holds it
     finally:
         first.release()
@@ -31,16 +31,16 @@ def test_second_holder_is_refused_while_held():
 
 @posix_only
 def test_lock_is_reusable_after_release():
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     assert lock.acquire() is True
     lock.release()
-    again = FileLock("nw", name="poll")
+    again = FileLock("myapp", name="poll")
     assert again.acquire() is True
     again.release()
 
 
 def test_context_manager_releases():
-    with FileLock("nw", name="poll") as lock:
+    with FileLock("myapp", name="poll") as lock:
         assert lock.acquired is True
     assert lock.acquired is False
 
@@ -52,11 +52,11 @@ def test_context_manager_raises_on_contention():
     # API). Regression for the old __enter__ that discarded acquire()'s result and entered anyway.
     from credbox.errors import LockHeldError
 
-    holder = FileLock("nw", name="poll")
+    holder = FileLock("myapp", name="poll")
     assert holder.acquire() is True
     try:
         with pytest.raises(LockHeldError):
-            with FileLock("nw", name="poll"):
+            with FileLock("myapp", name="poll"):
                 pytest.fail("entered the block without the lock")
     finally:
         holder.release()
@@ -65,18 +65,18 @@ def test_context_manager_raises_on_contention():
 def test_double_release_is_a_safe_no_op():
     # release() on an already-released lock must complete quietly (not re-close a descriptor or
     # raise), leave `acquired` False, and not prevent a fresh holder from taking the lock.
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     assert lock.acquire() is True
     lock.release()
     lock.release()   # second release: no error, no double-close
     assert lock.acquired is False
-    again = FileLock("nw", name="poll")
+    again = FileLock("myapp", name="poll")
     assert again.acquire() is True
     again.release()
 
 
 def test_acquire_is_idempotent_while_held():
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     assert lock.acquire() is True
     assert lock.acquire() is True   # still held, no error
     lock.release()
@@ -84,7 +84,7 @@ def test_acquire_is_idempotent_while_held():
 
 def test_lock_name_traversal_rejected():
     with pytest.raises(InvalidAppNameError):
-        FileLock("nw", name="../escape")   # a crafted name must not place the .lock outside runtime_dir
+        FileLock("myapp", name="../escape")   # a crafted name must not place the .lock outside runtime_dir
 
 
 def test_lock_bad_app_rejected():
@@ -99,7 +99,7 @@ def test_release_clears_state_even_when_unlock_fails(monkeypatch: pytest.MonkeyP
     # re-taking the lock, silently defeating the single-instance guarantee.
     import credbox.locking as locking
 
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     assert lock.acquire() is True
 
     def _boom(_handle: object) -> None:
@@ -109,7 +109,7 @@ def test_release_clears_state_even_when_unlock_fails(monkeypatch: pytest.MonkeyP
     lock.release()   # must not raise
     assert lock.acquired is False
     # a fresh lock can now genuinely take it (the OS lock was freed by the handle close)
-    other = FileLock("nw", name="poll")
+    other = FileLock("myapp", name="poll")
     assert other.acquire() is True
     other.release()
 
@@ -126,7 +126,7 @@ def test_acquire_falls_open_and_warns_when_locking_unsupported(monkeypatch):
     # On a filesystem that cannot lock (ENOLCK), the advisory lock must RUN (fail open) rather than
     # refuse forever: return True, set lock_unavailable, and issue a UserWarning -- not return False.
     _force_unsupported(monkeypatch)
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     with pytest.warns(UserWarning, match="without locking"):
         assert lock.acquire() is True          # fell open, did not refuse
     assert lock.acquired is True
@@ -139,7 +139,7 @@ def test_single_instance_runs_when_locking_unsupported(monkeypatch):
     # unlockable filesystem: single_instance yields True so the job runs.
     _force_unsupported(monkeypatch)
     with pytest.warns(UserWarning, match="single-instance protection"):
-        with single_instance("nw", name="poll") as acquired:
+        with single_instance("myapp", name="poll") as acquired:
             assert acquired is True   # runs, not silently skipped
 
 
@@ -149,7 +149,7 @@ def test_require_lock_fails_closed_on_unlockable_filesystem(monkeypatch):
     from credbox.errors import LockHeldError, LockUnavailableError
 
     _force_unsupported(monkeypatch)
-    strict = FileLock("nw", name="poll", require_lock=True)
+    strict = FileLock("myapp", name="poll", require_lock=True)
     with pytest.raises(LockUnavailableError) as excinfo:
         strict.acquire()
     assert not isinstance(excinfo.value, LockHeldError)   # distinct from contention
@@ -157,13 +157,13 @@ def test_require_lock_fails_closed_on_unlockable_filesystem(monkeypatch):
     assert strict.lock_unavailable is False    # and nothing ran unguarded
 
     with pytest.raises(LockUnavailableError):
-        with single_instance("nw", name="poll", require_lock=True):
+        with single_instance("myapp", name="poll", require_lock=True):
             pass
 
 
 def test_lock_unavailable_is_false_for_a_real_lock():
     # A genuinely-acquired lock did NOT fall open.
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     assert lock.acquire() is True
     assert lock.lock_unavailable is False
     lock.release()
@@ -173,7 +173,7 @@ def test_lock_unavailable_resets_on_a_later_real_acquire(monkeypatch):
     # The property tracks THIS hold: after a fall-open, releasing and genuinely re-acquiring must
     # report lock_unavailable=False, not carry the stale True forward.
     _force_unsupported(monkeypatch)
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     with pytest.warns(UserWarning):
         lock.acquire()
     assert lock.lock_unavailable is True
@@ -189,7 +189,7 @@ def test_lock_unavailable_is_cleared_by_release(monkeypatch):
     # yet reported unavailable" state. Pins the release()-side reset that keeps the "iff held"
     # contract honest between a fall-open release and the next acquire.
     _force_unsupported(monkeypatch)
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     with pytest.warns(UserWarning):
         lock.acquire()
     assert lock.lock_unavailable is True
@@ -203,7 +203,7 @@ def test_reacquire_while_fell_open_preserves_lock_unavailable(monkeypatch):
     # must NOT wipe the "ran unguarded" signal. Pins that ordering against a refactor that hoists the
     # reset above the guard.
     _force_unsupported(monkeypatch)
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     with pytest.warns(UserWarning):
         lock.acquire()
     assert lock.acquire() is True          # idempotent early-return, no re-warn
@@ -216,7 +216,7 @@ def test_acquire_reraises_and_stays_clean_when_the_warning_is_escalated(monkeypa
     # fail closed -- re-raise, hold nothing (the handle was closed), and NOT report lock_unavailable,
     # because nothing ran unguarded.
     _force_unsupported(monkeypatch)
-    lock = FileLock("nw", name="poll")
+    lock = FileLock("myapp", name="poll")
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         with pytest.raises(UserWarning):
@@ -230,5 +230,5 @@ def test_context_manager_require_lock_raises_on_unlockable_filesystem(monkeypatc
 
     _force_unsupported(monkeypatch)
     with pytest.raises(LockUnavailableError):
-        with FileLock("nw", name="poll", require_lock=True):
+        with FileLock("myapp", name="poll", require_lock=True):
             pytest.fail("entered the block without a lock")

@@ -117,16 +117,16 @@ def test_namespaced_set_get_list_round_trip(capsys: pytest.CaptureFixture[str]) 
 
     from credbox.paths import config_dir
 
-    assert main(["set", "yourapp", "GEMINI_API_KEY", "--namespace", "thinchat", "--value", "g"]) == 0
+    assert main(["set", "yourapp", "GEMINI_API_KEY", "--namespace", "myapp", "--value", "g"]) == 0
     assert main(["set", "yourapp", "smtp-password", "-n", "mailer", "--value", "m"]) == 0
     capsys.readouterr()
-    assert main(["list", "yourapp", "--namespace", "thinchat"]) == 0
+    assert main(["list", "yourapp", "--namespace", "myapp"]) == 0
     assert capsys.readouterr().out.split() == ["GEMINI_API_KEY"]
-    assert main(["get", "yourapp", "GEMINI_API_KEY", "-n", "thinchat", "--reveal"]) == 0
+    assert main(["get", "yourapp", "GEMINI_API_KEY", "-n", "myapp", "--reveal"]) == 0
     assert capsys.readouterr().out.strip() == "g"
     # Both components' secrets land in one file, each under its own namespace.
     on_disk = json.loads((config_dir("yourapp") / "credentials.json").read_text(encoding="utf-8"))
-    assert on_disk == {"thinchat": {"GEMINI_API_KEY": "g"}, "mailer": {"smtp-password": "m"}}
+    assert on_disk == {"myapp": {"GEMINI_API_KEY": "g"}, "mailer": {"smtp-password": "m"}}
 
 
 def test_namespaces_are_isolated_and_unset_is_scoped(capsys: pytest.CaptureFixture[str]) -> None:
@@ -158,7 +158,7 @@ def test_namespace_from_env_var_and_flag_overrides_it(
 def test_flat_command_on_a_namespaced_store_fails_with_a_layout_hint(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    main(["set", "yourapp", "K", "-n", "thinchat", "--value", "v"])   # namespaced store
+    main(["set", "yourapp", "K", "-n", "myapp", "--value", "v"])   # namespaced store
     capsys.readouterr()
     rc = main(["list", "yourapp"])   # flat command -> layout-mismatch fault
     captured = capsys.readouterr()

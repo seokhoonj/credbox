@@ -24,11 +24,11 @@ def test_warns_once_when_world_readable(tmp_path, capsys, monkeypatch):
     secret = tmp_path / "credentials.json"
     secret.write_text("{}")
     os.chmod(secret, 0o644)
-    warn_if_group_or_world_readable(secret, app="newswatcher")
-    warn_if_group_or_world_readable(secret, app="newswatcher")   # second call stays quiet
+    warn_if_group_or_world_readable(secret, app="host")
+    warn_if_group_or_world_readable(secret, app="host")   # second call stays quiet
     err = capsys.readouterr().err
     assert err.count("chmod 600") == 1
-    assert "newswatcher: warning" in err
+    assert "host: warning" in err
 
 
 @posix_only
@@ -37,7 +37,7 @@ def test_no_warning_when_private(tmp_path, capsys, monkeypatch):
     secret = tmp_path / "credentials.json"
     secret.write_text("{}")
     os.chmod(secret, 0o600)
-    warn_if_group_or_world_readable(secret, app="nw")
+    warn_if_group_or_world_readable(secret, app="myapp")
     assert capsys.readouterr().err == ""
 
 
@@ -47,11 +47,11 @@ def test_warn_if_dir_accessible_warns_once_and_recommends_chmod_700(tmp_path, ca
     loose = tmp_path / "holder"
     loose.mkdir()
     os.chmod(loose, 0o755)   # group/other can traverse -- should be 0700
-    assert warn_if_group_or_world_accessible(loose, app="nw") is True
-    assert warn_if_group_or_world_accessible(loose, app="nw") is True   # second call stays quiet
+    assert warn_if_group_or_world_accessible(loose, app="myapp") is True
+    assert warn_if_group_or_world_accessible(loose, app="myapp") is True   # second call stays quiet
     err = capsys.readouterr().err
     assert err.count("chmod 700") == 1   # the dir guard recommends 700, not the file's 600
-    assert "nw: warning" in err
+    assert "myapp: warning" in err
 
 
 @posix_only
@@ -60,11 +60,11 @@ def test_warn_if_dir_accessible_silent_on_private_dir_or_non_dir(tmp_path, capsy
     private = tmp_path / "holder"
     private.mkdir()
     os.chmod(private, 0o700)
-    assert warn_if_group_or_world_accessible(private, app="nw") is False
+    assert warn_if_group_or_world_accessible(private, app="myapp") is False
     a_file = tmp_path / "credentials.json"
     a_file.write_text("{}")
     os.chmod(a_file, 0o777)
-    assert warn_if_group_or_world_accessible(a_file, app="nw") is False   # not a directory -> skip
+    assert warn_if_group_or_world_accessible(a_file, app="myapp") is False   # not a directory -> skip
     assert capsys.readouterr().err == ""
 
 
@@ -145,5 +145,5 @@ def test_guards_are_no_ops_on_non_posix(tmp_path, monkeypatch, capsys):
     assert target.is_dir()
     secret = tmp_path / "credentials.json"
     secret.write_text("{}")
-    warn_if_group_or_world_readable(secret, app="nw")   # no permission bits to check
+    warn_if_group_or_world_readable(secret, app="myapp")   # no permission bits to check
     assert capsys.readouterr().err == ""
