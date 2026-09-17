@@ -130,16 +130,31 @@ Everything lands in one file, `~/.config/yourapp/credentials.json`:
 
 An app's credentials **file** is wholly flat or wholly namespaced: once it holds namespaces, a flat
 access (no namespace) raises rather than corrupting, and the reverse too — so give a namespaced
-store a fresh app name, or migrate an existing flat one (below). The namespace scopes only the
-shared and app store tiers; the environment and override tiers resolve by name alone (the same
-`name` reads the same env var whatever the namespace). Select a namespace on the CLI with
-`--namespace/-n` or the `CREDBOX_NAMESPACE` environment variable; the git credential helper is
-flat-only.
+store a fresh app name, or migrate an existing flat one with `credbox migrate` (below). The
+namespace scopes only this app's own store tier; a shared store is read at its own flat layout, and
+the environment and override tiers resolve by name alone (the same `name` reads the same env var
+whatever the namespace). Select a namespace on the CLI with `--namespace/-n` or the
+`CREDBOX_NAMESPACE` environment variable; the git credential helper is flat-only.
 
-**Migrating a flat store to namespaces.** Flat and namespaced cannot coexist in one file, so empty
-it in between: read each flat key (`credbox get app K --reveal`), remove them all
-(`credbox unset app K` — the store is empty once the last is gone), then re-store each under a
-namespace (`credbox set app K -n ns`).
+**Migrating a flat store to namespaces.** `credbox migrate` copies the keys for you — or moves them
+with `--remove-source`. Each write is atomic and preserves any sibling namespaces, and no value is
+ever echoed:
+
+```sh
+credbox migrate --from-app app --to-app app --to-namespace ns              # a flat store into its own section (moves: the two layouts can't coexist)
+credbox migrate --from-app thinchat --to-app host --to-namespace thinchat --remove-source
+```
+
+Converting a flat store to a namespace of the **same** app necessarily moves the keys — a flat and a
+namespaced layout cannot share one file. Every other form copies by default; add `--remove-source`
+to move.
+
+The second form is the **embedding** case: fold a standalone component's store into a host's, under
+the component's own section. A component built with `Credentials.for_app(app)` picks up a host's
+`<APP>_STORE_APP` / `<APP>_NAMESPACE` redirect automatically — and setting only `<APP>_STORE_APP`
+scopes the component under its own name, so several components consolidated into one host store
+never collide. Pass the component names through `check_env_var_prefix_collisions` once at startup to
+rule out a name clash first.
 
 Two caveats when several components share one store. The environment tier ignores the namespace, so
 two components that both self-resolve the *same* generic name (`API_KEY`) from `$API_KEY` get the
@@ -165,6 +180,7 @@ credbox set yourapp API_KEY -n chat     # -n/--namespace: operate within one sec
 credbox path myapp                      # print the credentials.json path
 credbox dirs myapp                      # print all five directories
 credbox doctor                          # check every app's credentials file/dir permissions
+credbox migrate --from-app a --to-app b --to-namespace a   # copy a store to a new app/namespace binding (--remove-source to move)
 ```
 
 `set` prompts (no echo) on a terminal; in a script or CI, pipe the value on stdin
@@ -322,15 +338,17 @@ than skipping forever; `lock_unavailable` then reports `True`. Pass `require_loc
 
 | Import | What it is |
 |--------|------------|
-| `Credentials(app, *, namespace=None, shared=(), backend=None)` | The four-tier secret resolver: `.secret` / `.require` / `.set` / `.unset` / `.names`. `namespace` scopes the store to a component's section within one app's store. |
+| `Credentials(app, *, namespace=None, shared=(), backend=None)` | The four-tier secret resolver: `.secret` / `.require` / `.set` / `.unset` / `.names`. `namespace` scopes the store to a component's section within one app's store. Also `.app` / `.namespace` (the resolved binding), `.store_location()` (a secret-free description of where the secrets live), and `.migrate_to(dest, *, remove_source=False)` (returns a `MigrationResult`). |
 | `Credentials.for_app(app, *, shared=(), backend=None)` | Embeddable alternative constructor: binds the store from `<PREFIX>_STORE_APP` / `<PREFIX>_NAMESPACE` env overrides (default: the app's own flat store), so a host can consolidate the component into its store under a namespace without a code change. |
+| `MigrationResult` | What `migrate_to` did: `.migrated` / `.overwritten` / `.moved`. |
+| `check_env_var_prefix_collisions(apps)` | Raise `CollidingPrefixError` if any two app names fold to the same env-var prefix -- a host embedding several components calls it once at startup. |
 | `Secret` / `mask_secret` | The leak-safe value type (`.reveal()` for the raw string) and its canonical mask. |
 | `config_dir` / `data_dir` / `state_dir` / `cache_dir` / `runtime_dir` | XDG directories for an app. |
 | `default_backend` / `file_backend` / `keyring_backend` / `encrypted_backend` | Backend chooser and factories. |
-| `SecretBackend` / `FileBackend` | The backend protocol and the zero-dep file backend. |
+| `SecretBackend` / `SupportsLocationDescription` / `FileBackend` | The backend protocol, the optional location-description capability a backend may add, and the zero-dep file backend. |
 | `scrub_secrets` / `scrub_exception` | Redact secret values from text and exception chains. |
 | `single_instance` / `FileLock` | Single-instance advisory locking in `runtime_dir`. |
-| `CredBoxError` / `CredentialsError` / `NoKeyringError` / `InsecureStorageError` / `InvalidAppNameError` / `InvalidLayoutError` / `BlankSecretError` / `LockHeldError` / `LockUnavailableError` / `DecryptionError` / `MissingExtraError` | The exception hierarchy. |
+| `CredBoxError` / `CredentialsError` / `NoKeyringError` / `InsecureStorageError` / `InvalidAppNameError` / `InvalidLayoutError` / `BlankSecretError` / `InvalidSecretTypeError` / `CollidingPrefixError` / `InvalidMigrationError` / `LockHeldError` / `LockUnavailableError` / `DecryptionError` / `MissingExtraError` | The exception hierarchy. |
 | `__version__` | The installed package version string. |
 
 ### Building blocks (for library authors)

@@ -16,10 +16,11 @@ from credbox.backends.factory import (
     keyring_backend,
 )
 from credbox.backends.file import FileBackend
-from credbox.backends.protocol import SecretBackend
+from credbox.backends.protocol import SecretBackend, SupportsLocationDescription
 
 __all__ = [
     "SecretBackend",
+    "SupportsLocationDescription",
     "FileBackend",
     "file_backend",
     "keyring_backend",

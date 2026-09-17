@@ -340,3 +340,88 @@ def test_unexpected_exception_is_content_free_not_a_traceback(
     captured = capsys.readouterr()
     assert SECRET not in captured.err + captured.out
     assert "Traceback" not in captured.err
+
+
+# --- migrate: copy/move an app's stored secrets to another binding (never echoes a value) ---
+
+def test_migrate_copies_secrets_into_a_namespace(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "myapp", "K1", "--value", "v1"]) == 0
+    assert main(["set", "myapp", "K2", "--value", "v2"]) == 0
+    capsys.readouterr()
+    assert main(["migrate", "--from-app", "myapp", "--to-app", "host", "--to-namespace", "myapp"]) == 0
+    out = capsys.readouterr().out
+    assert "copied 2 secret(s)" in out                    # default is copy (source left intact)
+    assert "v1" not in out and "v2" not in out            # a migration report never echoes values
+    assert main(["get", "host", "K1", "--namespace", "myapp", "--reveal"]) == 0
+    assert capsys.readouterr().out.strip() == "v1"        # readable at the new binding
+    assert main(["get", "myapp", "K1"]) == 0              # and still present in the source (copy, not move)
+
+
+def test_migrate_same_app_flat_to_namespace_in_one_file(capsys: pytest.CaptureFixture[str]) -> None:
+    # The README's headline example: convert a flat store to a namespace of the SAME app. The source
+    # and destination share one file, so the flat keys must be cleared before the namespaced write --
+    # a regression guard for the "copy-before-remove faults on the mixed layout" bug.
+    assert main(["set", "myapp", "K", "--value", "v"]) == 0
+    capsys.readouterr()
+    assert main(["migrate", "--from-app", "myapp", "--to-app", "myapp", "--to-namespace", "ns"]) == 0
+    assert "moved 1 secret(s)" in capsys.readouterr().out
+    assert main(["get", "myapp", "K", "--namespace", "ns", "--reveal"]) == 0
+    assert capsys.readouterr().out.strip() == "v"         # now in the ns section
+    assert main(["get", "myapp", "K"]) == 1               # gone from the flat layout
+
+
+def test_migrate_rejects_the_same_store(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "myapp", "K", "--value", "v"]) == 0
+    capsys.readouterr()
+    assert main(["migrate", "--from-app", "myapp", "--to-app", "myapp"]) == 2
+    assert "same store" in capsys.readouterr().err
+
+
+def test_migrate_remove_source_empties_the_origin(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "myapp", "K", "--value", "v"]) == 0
+    capsys.readouterr()
+    assert main(
+        ["migrate", "--from-app", "myapp", "--to-app", "host", "--to-namespace", "myapp", "--remove-source"]
+    ) == 0
+    assert "moved 1 secret(s)" in capsys.readouterr().out
+    assert main(["get", "myapp", "K"]) == 1               # removed from the source store
+
+
+def test_migrate_an_empty_source_creates_no_destination(capsys: pytest.CaptureFixture[str]) -> None:
+    capsys.readouterr()
+    assert main(["migrate", "--from-app", "empty", "--to-app", "host", "--to-namespace", "empty"]) == 0
+    assert "copied 0 secret(s)" in capsys.readouterr().out
+    assert main(["list", "host", "--namespace", "empty"]) == 0
+    assert capsys.readouterr().out.strip() == ""          # nothing written to the destination
+
+
+def test_migrate_refuses_same_app_namespaced_to_flat(capsys: pytest.CaptureFixture[str]) -> None:
+    # Namespaced -> flat within one file cannot be done safely (a surviving sibling section would
+    # fault the flat write after the source is cleared), so it is refused up front.
+    assert main(["set", "myapp", "K", "--value", "v", "--namespace", "ns"]) == 0
+    capsys.readouterr()
+    assert main(["migrate", "--from-app", "myapp", "--from-namespace", "ns", "--to-app", "myapp"]) == 2
+    assert "different app" in capsys.readouterr().err
+    assert main(["get", "myapp", "K", "--namespace", "ns", "--reveal"]) == 0   # source untouched
+
+
+def test_migrate_write_failure_leaves_the_source_intact(capsys: pytest.CaptureFixture[str]) -> None:
+    # A cross-store move whose destination write faults (here: a flat host store already holds keys,
+    # so the namespaced write hits the mixed-layout fault) must NOT have removed the source first --
+    # the secret survives. This is the durability guarantee: write the destination before removing.
+    assert main(["set", "src", "K", "--value", "v"]) == 0
+    assert main(["set", "host", "X", "--value", "flat"]) == 0   # host is FLAT -> a namespaced write will fault
+    capsys.readouterr()
+    assert main(
+        ["migrate", "--from-app", "src", "--to-app", "host", "--to-namespace", "src", "--remove-source"]
+    ) == 1
+    assert main(["get", "src", "K", "--reveal"]) == 0           # the source secret survived the failed move
+    assert capsys.readouterr().out.strip() == "v"
+
+
+def test_migrate_reports_overwritten_destination_keys(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["set", "src", "K", "--value", "new"]) == 0
+    assert main(["set", "dst", "K", "--value", "old"]) == 0     # dst already has a K -> it is overwritten
+    capsys.readouterr()
+    assert main(["migrate", "--from-app", "src", "--to-app", "dst"]) == 0
+    assert "1 overwritten" in capsys.readouterr().out

@@ -43,6 +43,12 @@ class FileBackend:
         """The credentials file for ``app``: ``credentials.json`` in ``config_dir(app)``."""
         return config_dir(app) / CREDENTIALS_FILE
 
+    def describe_location(self, app: str, *, namespace: str | None = None) -> str:
+        """Where ``app``'s secrets are stored: the file path, and the namespace section within it
+        when scoped. Secret-free -- a path and a section name only."""
+        section = "" if namespace is None else f", section {namespace!r}"
+        return f"{self.path(app)}{section}"
+
     def get(self, app: str, name: str, *, namespace: str | None = None) -> Secret | None:
         """Return the value stored under ``name`` (within ``namespace`` when given) as a ``Secret``,
         or ``None`` when the file, namespace, or key is absent (or the value is blank). Warns once

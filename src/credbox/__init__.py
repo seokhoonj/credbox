@@ -14,25 +14,30 @@ from credbox.atomic import write_bytes_atomic, write_text_atomic
 from credbox.backends import (
     FileBackend,
     SecretBackend,
+    SupportsLocationDescription,
     default_backend,
     encrypted_backend,
     file_backend,
     keyring_backend,
 )
-from credbox.credentials import Credentials
+from credbox.credentials import Credentials, MigrationResult
 from credbox.environment import (
+    check_env_var_prefix_collisions,
     colliding_env_var_prefixes,
     env_var_prefix,
     read_absolute_path_override,
 )
 from credbox.errors import (
     BlankSecretError,
+    CollidingPrefixError,
     CredBoxError,
     CredentialsError,
     DecryptionError,
     InsecureStorageError,
     InvalidAppNameError,
     InvalidLayoutError,
+    InvalidMigrationError,
+    InvalidSecretTypeError,
     LockHeldError,
     LockUnavailableError,
     MissingExtraError,
@@ -73,12 +78,16 @@ __all__ = [
     "InvalidAppNameError",
     "InvalidLayoutError",
     "BlankSecretError",
+    "InvalidSecretTypeError",
+    "CollidingPrefixError",
+    "InvalidMigrationError",
     "LockHeldError",
     "LockUnavailableError",
     "DecryptionError",
     "MissingExtraError",
     # resolver facade
     "Credentials",
+    "MigrationResult",
     # value type
     "Secret",
     "mask_secret",
@@ -94,6 +103,7 @@ __all__ = [
     # environment
     "env_var_prefix",
     "colliding_env_var_prefixes",
+    "check_env_var_prefix_collisions",
     "read_absolute_path_override",
     # storage primitives
     "write_bytes_atomic",
@@ -112,6 +122,7 @@ __all__ = [
     "scrub_exception",
     # backends (core + factories only; extra classes are reached via the factories)
     "SecretBackend",
+    "SupportsLocationDescription",
     "FileBackend",
     "file_backend",
     "keyring_backend",

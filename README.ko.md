@@ -109,13 +109,28 @@ key = Credentials("yourapp", namespace="chat").require("GEMINI_API_KEY")   # 다
 
 한 앱의 자격증명 **파일**은 flat이거나 namespaced 중 하나입니다 — namespace가 생기면 flat 접근(namespace
 없이)은 손상 대신 예외가 나고 그 반대도 마찬가지 — 그러니 namespaced 저장소엔 새 앱 이름을 주거나, 기존
-flat 저장소를 마이그레이션(아래)하세요. namespace는 공유·앱 저장소 단계만 구획합니다. 환경변수·override
-단계는 이름만으로 해석되므로 같은 `name`은 namespace와 무관하게 같은 환경변수를 읽습니다. CLI에서는
-`--namespace/-n` 또는 `CREDBOX_NAMESPACE` 환경변수로 namespace를 고릅니다. git 자격증명 헬퍼는 flat 전용입니다.
+flat 저장소를 `credbox migrate`로 마이그레이션(아래)하세요. namespace는 이 앱의 자기 저장소 단계만 구획하고,
+공유 저장소는 자기 flat layout으로 읽습니다. 환경변수·override 단계는 이름만으로 해석되므로 같은 `name`은
+namespace와 무관하게 같은 환경변수를 읽습니다. CLI에서는 `--namespace/-n` 또는 `CREDBOX_NAMESPACE`
+환경변수로 namespace를 고릅니다. git 자격증명 헬퍼는 flat 전용입니다.
 
-**flat 저장소를 namespace로 마이그레이션.** flat과 namespaced는 한 파일에 공존할 수 없으니 중간에 비웁니다:
-각 flat 키를 읽고(`credbox get app K --reveal`), 전부 제거한 뒤(`credbox unset app K` — 마지막 키가 사라지면
-저장소는 빈 상태), 각각을 namespace 아래 다시 저장합니다(`credbox set app K -n ns`).
+**flat 저장소를 namespace로 마이그레이션.** `credbox migrate`가 키를 대신 복사합니다 — `--remove-source`를
+주면 이동합니다. 각 쓰기는 원자적이고 다른 namespace는 보존하며, 값은 절대 출력하지 않습니다:
+
+```sh
+credbox migrate --from-app app --to-app app --to-namespace ns              # flat 저장소를 자기 구획으로 (이동: 두 layout은 공존 불가)
+credbox migrate --from-app thinchat --to-app host --to-namespace thinchat --remove-source
+```
+
+flat 저장소를 **같은** 앱의 namespace로 바꾸는 건 불가피하게 키를 이동시킵니다 — flat과 namespaced
+layout은 한 파일에 공존할 수 없기 때문입니다. 그 외 모든 형태는 기본이 복사이고, `--remove-source`를
+주면 이동합니다.
+
+두 번째 형태가 **임베딩** 경우입니다: 단독 실행하던 도구의 저장소를 호스트의 저장소 안 자기 구획으로
+접습니다. `Credentials.for_app(app)`로 만든 도구는 호스트의 `<APP>_STORE_APP` / `<APP>_NAMESPACE`
+리다이렉트를 자동으로 따르며 — `<APP>_STORE_APP`만 설정하면 도구를 자기 이름 아래로 구획해, 한 호스트
+저장소로 통합된 여러 도구가 서로 충돌하지 않습니다. 시작 시 `check_env_var_prefix_collisions`로 이름 충돌을
+먼저 걸러내세요.
 
 여러 도구가 한 저장소를 공유할 때 주의 두 가지. 환경변수 단계는 namespace를 무시하므로, 두 도구가 *같은*
 일반 이름(`API_KEY`)을 `$API_KEY`에서 각자 해석하면 *같은* 값을 받습니다 — 각자 다른 env 이름(예제의
@@ -139,6 +154,7 @@ credbox set myapp API_KEY -n chat       # -n/--namespace: 저장소의 한 구�
 credbox path myapp                      # credentials.json 경로
 credbox dirs myapp                      # 디렉터리 다섯 개
 credbox doctor                          # 모든 앱의 권한 점검
+credbox migrate --from-app a --to-app b --to-namespace a   # 저장소를 새 app/namespace 바인딩으로 복사 (--remove-source로 이동)
 ```
 
 `set`은 터미널에선 (에코 없이) 입력받고, 스크립트·CI에선 값을 stdin으로 파이프하세요
@@ -285,15 +301,17 @@ with single_instance("myapp", name="poll") as acquired:
 
 | Import | 설명 |
 |--------|------|
-| `Credentials(app, *, namespace=None, shared=(), backend=None)` | 네 단계 시크릿 리졸버: `.secret` / `.require` / `.set` / `.unset` / `.names`. `namespace`는 한 앱 저장소 안의 컴포넌트별 구획으로 저장을 한정합니다. |
+| `Credentials(app, *, namespace=None, shared=(), backend=None)` | 네 단계 시크릿 리졸버: `.secret` / `.require` / `.set` / `.unset` / `.names`. `namespace`는 한 앱 저장소 안의 컴포넌트별 구획으로 저장을 한정합니다. `.app` / `.namespace`(해소된 바인딩), `.store_location()`(시크릿이 어디 있는지 시크릿 없는 설명), `.migrate_to(dest, *, remove_source=False)`(`MigrationResult` 반환)도 있습니다. |
+| `MigrationResult` | `migrate_to`가 한 일: `.migrated` / `.overwritten` / `.moved`. |
+| `check_env_var_prefix_collisions(apps)` | 두 앱 이름이 같은 env-var 접두어로 폴딩되면 `CollidingPrefixError`를 냄 — 여러 컴포넌트를 embed하는 host가 시작 시 1회 호출. |
 | `Credentials.for_app(app, *, shared=(), backend=None)` | embed 가능한 대체 생성자: `<PREFIX>_STORE_APP`·`<PREFIX>_NAMESPACE` 환경변수 override로 저장소를 바인딩(기본값은 자기 앱의 flat 저장소)해서, host가 코드 변경 없이 컴포넌트를 자기 저장소의 namespace로 통합할 수 있게 합니다. |
 | `Secret` / `mask_secret` | 로그에 새지 않는 값 타입(`.reveal()`로 실제 문자열)과 표준 마스크. |
 | `config_dir` / `data_dir` / `state_dir` / `cache_dir` / `runtime_dir` | 앱의 XDG 디렉터리. |
 | `default_backend` / `file_backend` / `keyring_backend` / `encrypted_backend` | 백엔드 선택기와 팩토리. |
-| `SecretBackend` / `FileBackend` | 백엔드 프로토콜과 의존성 0 파일 백엔드. |
+| `SecretBackend` / `SupportsLocationDescription` / `FileBackend` | 백엔드 프로토콜, 백엔드가 선택적으로 더할 수 있는 위치-설명 능력, 의존성 0 파일 백엔드. |
 | `scrub_secrets` / `scrub_exception` | 텍스트와 예외 체인에서 시크릿 값 마스킹. |
 | `single_instance` / `FileLock` | `runtime_dir`의 단일 인스턴스 잠금. |
-| `CredBoxError` / `CredentialsError` / `NoKeyringError` / `InsecureStorageError` / `InvalidAppNameError` / `InvalidLayoutError` / `BlankSecretError` / `LockHeldError` / `LockUnavailableError` / `DecryptionError` / `MissingExtraError` | 예외 계층. |
+| `CredBoxError` / `CredentialsError` / `NoKeyringError` / `InsecureStorageError` / `InvalidAppNameError` / `InvalidLayoutError` / `BlankSecretError` / `InvalidSecretTypeError` / `CollidingPrefixError` / `InvalidMigrationError` / `LockHeldError` / `LockUnavailableError` / `DecryptionError` / `MissingExtraError` | 예외 계층. |
 | `__version__` | 설치된 패키지 버전 문자열. |
 
 ### 빌딩 블록 (라이브러리 작성자용)

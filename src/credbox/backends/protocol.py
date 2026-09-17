@@ -27,11 +27,11 @@ for flat use; a backend that means to support namespaces must accept this keywor
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from credbox.secret import Secret
 
-__all__ = ["SecretBackend"]
+__all__ = ["SecretBackend", "SupportsLocationDescription"]
 
 
 class SecretBackend(Protocol):
@@ -55,3 +55,15 @@ class SecretBackend(Protocol):
             namespace: str | None = None) -> None: ...
     def unset(self, app: str, name: str, *, namespace: str | None = None) -> None: ...
     def names(self, app: str, *, namespace: str | None = None) -> list[str]: ...
+
+
+@runtime_checkable
+class SupportsLocationDescription(Protocol):
+    """An OPTIONAL capability a backend may add on top of ``SecretBackend`` (new in 0.4.0): a
+    secret-free, human-readable description of WHERE it keeps an app's secrets -- a file path, or an
+    OS-keyring service name -- for a setup wizard to show the user. Kept off ``SecretBackend`` so a
+    backend written against the four-operation interface still satisfies it; ``Credentials.store_location``
+    narrows with ``isinstance`` and falls back to a generic description when a backend lacks it. All
+    of credbox's own backends (file, encrypted, keyring) implement it."""
+
+    def describe_location(self, app: str, *, namespace: str | None = None) -> str: ...

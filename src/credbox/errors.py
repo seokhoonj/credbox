@@ -17,6 +17,9 @@ __all__ = [
     "InvalidAppNameError",
     "InvalidLayoutError",
     "BlankSecretError",
+    "InvalidSecretTypeError",
+    "CollidingPrefixError",
+    "InvalidMigrationError",
     "LockHeldError",
     "LockUnavailableError",
     "DecryptionError",
@@ -67,6 +70,43 @@ class BlankSecretError(CredBoxError, ValueError):
     is unresolvable -- both are refused to keep ``set`` and ``get`` consistent. Also a
     ``ValueError`` -- a blank is a caller mistake -- so an ``except ValueError`` catches it too,
     mirroring ``InvalidAppNameError``."""
+
+
+class InvalidSecretTypeError(CredBoxError, TypeError):
+    """A value passed to ``Credentials.set``, or an ``override`` passed to ``secret``/``require``,
+    is neither a ``str`` nor a ``Secret``. Also a ``TypeError`` -- the wrong type is a caller
+    mistake, so an ``except TypeError`` still catches it -- while being a ``CredBoxError`` too, so a
+    caller guarding the store with ``except CredBoxError`` catches it without a separate ``except
+    TypeError``. The message names the offending type only, never the value (which could be a
+    secret), mirroring ``BlankSecretError``'s content-free contract."""
+
+
+class CollidingPrefixError(CredBoxError, ValueError):
+    """Two or more app names passed to ``check_env_var_prefix_collisions`` fold to the SAME
+    environment-variable prefix (e.g. ``my-app`` and ``my.app`` both fold to ``MY_APP``), so a host
+    embedding them would drive them with the same ``<PREFIX>_STORE_APP`` / ``<PREFIX>_NAMESPACE`` and
+    their secrets would land in one place, colliding. Also a ``ValueError`` -- colliding component
+    names are a caller mistake. Carries ``.collisions`` (``{prefix: [app, ...]}``) so a host can
+    print exactly which names clash."""
+
+    def __init__(self, collisions: dict[str, list[str]]) -> None:
+        self.collisions = collisions
+        detail = "; ".join(
+            f"{prefix} <- {', '.join(apps)}" for prefix, apps in sorted(collisions.items())
+        )
+        super().__init__(
+            f"app names collide on their environment-variable prefix (embedding them into one host "
+            f"would cross their store bindings): {detail}"
+        )
+
+
+class InvalidMigrationError(CredBoxError, ValueError):
+    """``Credentials.migrate_to`` was asked for an illegal migration: the destination is the SAME
+    store (same app and namespace), or a same-app namespaced->flat conversion (which cannot be done
+    safely, since a surviving sibling namespace would fault the flat write after the source is
+    cleared). Also a ``ValueError`` -- an illegal request is a caller mistake -- so an
+    ``except ValueError`` still catches it, while ``except CredBoxError`` covers it too, mirroring
+    ``InvalidLayoutError`` and ``CollidingPrefixError``."""
 
 
 class LockHeldError(CredBoxError):

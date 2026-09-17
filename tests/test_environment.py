@@ -7,11 +7,13 @@ from pathlib import Path
 import pytest
 
 from credbox.environment import (
+    check_env_var_prefix_collisions,
     colliding_env_var_prefixes,
     env_value,
     env_var_prefix,
     read_absolute_path_override,
 )
+from credbox.errors import CollidingPrefixError
 
 
 def test_env_value_returns_none_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,3 +60,16 @@ def test_env_var_prefix_folds_and_uppercases() -> None:
 def test_colliding_env_var_prefixes_reports_only_collisions() -> None:
     result = colliding_env_var_prefixes(["a-b", "a.b", "a_b", "solo"])
     assert result == {"A_B": ["a-b", "a.b", "a_b"]}
+
+
+def test_check_env_var_prefix_collisions_passes_when_prefixes_are_distinct() -> None:
+    # The fleet's real component names must not collide -- and a distinct set is a silent no-op.
+    check_env_var_prefix_collisions(["thinchat", "mailmail", "pushpush"])
+
+
+def test_check_env_var_prefix_collisions_raises_on_a_lossy_fold() -> None:
+    with pytest.raises(CollidingPrefixError) as exc:
+        check_env_var_prefix_collisions(["my-app", "my.app", "other"])
+    assert exc.value.collisions == {"MY_APP": ["my-app", "my.app"]}
+    assert isinstance(exc.value, ValueError)     # a caller mistake
+    assert "MY_APP" in str(exc.value) and "my-app" in str(exc.value)
